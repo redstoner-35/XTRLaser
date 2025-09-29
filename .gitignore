@@ -1,0 +1,10 @@
+..\Firmware\Objects
+..\Firmware\Listings
+..\PCB\History
+..\PCB\__Previews
+..\KeyPCB\History
+..\KeyPCB\__Previews
+*.uvproj
+*.uvopt
+*.uvgui
+*.redstoner_35
