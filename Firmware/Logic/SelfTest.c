@@ -7,6 +7,29 @@
 #include "LowVoltProt.h"
 #include "OutputChannel.h"
 
+//系统保护电压自动定义，不得修改！！！
+#ifdef USING_LD_NUBB33
+
+	//使用NUBB13/23/33 四管455nm LD
+	#define OVPVolt 17.0
+	#define DCDCStartVolt 11.0
+
+#elif define(USING_LD_NUBB37)
+
+	//使用NUBB27/37 五管455nm LD
+	#define OVPVolt 21.0
+	#define DCDCStartVolt 14.0
+
+#elif define(USING_LD_NURM11T)
+	
+	//使用NURM11T 四管双束638nm LD
+	#define OVPVolt 10.0
+	#define DCDCStartVolt 5.5
+
+#else
+  #error "You should define which LD Type you want to use at Project Definition Space!"
+#endif
+
 //内部变量
 static xdata unsigned char ErrDisplayIndex; //错误显示计时
 static xdata unsigned char ShortDetectTIM=0; //短路监测计时器
@@ -102,13 +125,13 @@ void OutputFaultDetect(void)
 			OErrID=0;
 			}
 		//DCDC启动失败检测
-		else if(Data.OutputVoltage<11.1)
+		else if(Data.OutputVoltage<DCDCStartVolt)
 			{
 			buf=ErrTIMCounter(buf,1); //计时器累计
 			OErrID=2;
 			}			
 		//输出开路检测
-		else if(Data.OutputVoltage>17.0) 
+		else if(Data.OutputVoltage>OVPVolt) 
 			{
 			buf=ErrTIMCounter(buf,1); //计时器累计
 			OErrID=1;

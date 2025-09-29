@@ -22,12 +22,23 @@ static void StartBattAlertTimer(void)
 //运行过程中检测电池电压并更新到2S模式
 void RuntimeUpdateTo2S(void)
 	{
+	#ifndef USING_LD_NURM11T
 	//电池电压非2S模式或者2S模式已开启，退出
 	if(IsEnable2SMode||Data.RawBattVolt<4.35)return;
 	//当前系统为单锂，检测到高电压自动开启2S模式
 	IsEnable2SMode=1;
 	Trigger2SModeEnterInfo();
 	SaveSysConfig(0);
+	#else
+	//红光LD只能单锂，如果系统是双锂模式，则强制回到单锂
+	if(IsEnable2SMode)
+		{
+		IsEnable2SMode=0;
+		SaveSysConfig(0);
+		}
+	//电池电压高于单锂允许值，报错
+	if(Data.RawBattVolt>4.35)ReportError(Fault_InputOVP);	
+	#endif
 	}
 	
 //电池低电量报警处理函数

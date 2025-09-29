@@ -302,13 +302,18 @@ void DisplayVBattAtStart(bit IsPOR)
 	//初始化平均值缓存,复位标志位
 	ResetBattAvg();
 	//进行电池电压合法性检查并自动进行更新处理
+	#ifndef USING_LD_NURM11T	
 	if(Data.RawBattVolt>8.60)ReportError(Fault_InputOVP);
   else if(Data.RawBattVolt>4.35&&!IsEnable2SMode)		
 		{
 		//当前系统为单锂，检测到高电压自动开启2S模式
 		IsEnable2SMode=1;
 		SaveSysConfig(0);
-		}
+		}	
+	#else
+	//红光LD只能单锂，如果固件配置为红光模式则在输入电压大于4.35V时报错
+	if(Data.RawBattVolt>4.35)ReportError(Fault_InputOVP);
+	#endif
   //复位电池电压状态和电池显示状态机
   VshowFSMState=BattVdis_Waiting;		
 	do

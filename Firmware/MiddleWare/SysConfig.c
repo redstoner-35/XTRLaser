@@ -64,8 +64,12 @@ static void PrepareFactoryDefaultCfg(void)
 	IsEnableIdleLED=1;
   //根据重置时的电池电压设置是否开启双锂模式
 	SystemTelemHandler();
+	#ifndef USING_LD_NURM11T
 	if(Data.RawBattVolt>4.35)IsEnable2SMode=1;
 	else IsEnable2SMode=0;
+	#else
+	IsEnable2SMode=0;	 //红光LD只能单锂
+	#endif
 	}	
 	
 //尝试检测用户进行重置操作	

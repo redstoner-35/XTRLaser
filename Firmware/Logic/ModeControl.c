@@ -613,6 +613,7 @@ void ModeSwitchFSM(void)
 					SaveSysConfig(0);
 				  break;
 		    case 6:
+					#ifndef USING_LD_NURM11T
 					//关机状态下6击，在1S和2S之间切换电池节数
 					if(Data.RawBattVolt>4.35)IsEnable2SMode=1; 	//当前安装的电池是2节，始终保持开启2S模式
 					else IsEnable2SMode=IsEnable2SMode?0:1; 		//当前安装的电池是1节，允许翻转状态在1S/2S之间切换
@@ -627,7 +628,8 @@ void ModeSwitchFSM(void)
 						if(SysCfg.RampCurrentLimit>1800)SysCfg.RampCurrentLimit=1800;
 						}
 					//保存更改后的配置数据
-					SaveSysConfig(0);  
+					SaveSysConfig(0);
+          #endif						
 					break;
 				case 7:
 					//7击切换有源夜光功能
@@ -727,7 +729,13 @@ void ModeSwitchFSM(void)
 			  if(!IsEnable2SMode)Current=getSideKeyHoldEvent()?1800:CurrentMode->MinCurrent;
 				else Current=getSideKeyHoldEvent()?QueryCurrentGearILED():CurrentMode->MinCurrent;
 		    //烧灼模式下只有按下按键才打开温控计算
-				IsPauseStepDownCalc=Current==CurrentMode->MinCurrent?1:0;
+		    if(Current==CurrentMode->MinCurrent)IsPauseStepDownCalc=1; //按键松开，暂停温控计算
+				else	
+					{
+					//按键按下，复位烧灼模式超时计时器并启用温控运算
+					BurnModeTimer=8*BurnModeTimeOut;
+					IsPauseStepDownCalc=0;
+					}
 				break; 			
 		case Mode_SOS:
 				//SOS模式电流由状态机控制
