@@ -68,6 +68,37 @@ extern bit IsSystemLocked;		//系统是否已锁定
 extern bit IsEnableIdleLED;	//是否开启待机提示	
 extern bit IsEnable2SMode;    //是否开启双锂模式
 	
+/************************************************
+根据LD激光最高输出电流的自动定义，该函数决定系统的
+最大功率限制，为了确保激光驱动正常工作，不得擅自
+修改或调整！！！	
+************************************************/	
+#ifdef USING_LD_NUBB33
+	
+	//使用NUBB13/23/33 四管455nm LD
+	#define SingleCellModeICCMAX 1800
+	#define DualCellTurboCurrent 4100
+
+#elif define(USING_LD_NUBB37) 
+
+	//使用NUBB27/37 五管455nm LD	
+	#define SingleCellModeICCMAX 1500
+	#define DualCellTurboCurrent 3750
+	
+#elif define(USING_LD_NURM11T)
+	
+	//使用NURM11T 四管双束638nm LD
+	#define SingleCellModeICCMAX 1800
+	#define DualCellTurboCurrent 3500
+	
+#else
+
+	//其余LD类型默认按照1.6A来
+	#define SingleCellModeICCMAX 1600
+	#define DualCellTurboCurrent 3500
+	
+#endif
+
 //特殊宏定义
 #define QueryCurrentGearILED() CurrentMode->Current //获取当前挡位的电流函数
 	

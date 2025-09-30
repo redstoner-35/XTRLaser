@@ -87,7 +87,7 @@ void BatteryLowAlertProcess(bool IsNeedToShutOff,ModeIdxDef ModeJump)
 void RampRestoreLVProtToMax(void)
 	{
 	if(IsBatteryAlert||IsBatteryFault)return;
-	if(BattState==Battery_Plenty)SysCfg.RampCurrentLimit=IsEnable2SMode?QueryCurrentGearILED():1800; //电池电量回升到充足状态，复位电流限制
+	if(BattState==Battery_Plenty)SysCfg.RampCurrentLimit=IsEnable2SMode?QueryCurrentGearILED():SingleCellModeICCMAX; //电池电量回升到充足状态，复位电流限制
 	
 	}
 	
@@ -99,14 +99,14 @@ void RampLowVoltHandler(void)
 		BattAlertTimer=0;
 		if(BattState==Battery_Plenty) //电池电量回升到充足状态，缓慢增加电流限制
 			{
-	    if(SysCfg.RampCurrentLimit<CurrentMode->Current)
+	    if(SysCfg.RampCurrentLimit<QueryCurrentGearILED())
 				 {
 			   if(!RampCurrentRiseAttmTIM)RampCurrentRiseAttmTIM=1; //启动定时器开始计时
 				 else if(RampCurrentRiseAttmTIM<9)return; //时间未到
          RampCurrentRiseAttmTIM=1;
 				 if(SysCfg.RampBattThres>CurrentMode->LowVoltThres)SysCfg.RampBattThres=CurrentMode->LowVoltThres; //电压检测达到上限，禁止继续增加
 				 else SysCfg.RampBattThres+=50; //电压检测上调50mV
-         if(SysCfg.RampCurrentLimit>CurrentMode->Current)SysCfg.RampCurrentLimit=CurrentMode->Current;//增加电流之后检测电流值是否超出允许值
+         if(SysCfg.RampCurrentLimit>QueryCurrentGearILED())SysCfg.RampCurrentLimit=QueryCurrentGearILED();//增加电流之后检测电流值是否超出允许值
 				 else SysCfg.RampCurrentLimit+=250;	//电流上调250mA		 
 				 }
 			else RampCurrentRiseAttmTIM=0; //已达到电流上限禁止继续增加

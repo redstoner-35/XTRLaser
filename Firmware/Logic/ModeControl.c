@@ -54,7 +54,7 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
 		{
 		Mode_Ramp,
 		3000,  //最大 3A电流
-		550,   //最小 0.55A电流
+		400,   //最小 0.4A电流
 		3200,  //3.2V关断
 		false, //不能带记忆  
 		true,
@@ -104,7 +104,7 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
     //中高亮
 		{
 		Mode_MHigh,
-		1800,  //1.8A电流
+		SingleCellModeICCMAX,  //1.8A电流
 		0,   //最小电流没用到，无视
 		3100,  //3.1V关断
 		true,
@@ -138,7 +138,7 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
     //极亮
 		{
 		Mode_Turbo,
-		4100,  //4.1A电流	
+		DualCellTurboCurrent,  //使用系统根据LD类型自动选择的极亮电流
 		0,   //最小电流没用到，无视
 		3350,  //3.35V关断
 		false, //极亮不能带记忆
@@ -189,7 +189,7 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
 		//拿来烧东西的点动模式
 		{
 		Mode_Burn,
-		4100,  //4.1A电流（按下开始烧灼）	
+		DualCellTurboCurrent,  //使用系统根据LD类型自动选择的极亮电流
 		200,   //在按键松开状态下200mA
 		3350,  //3.35V关断
 		false, //特殊挡位不能带记忆
@@ -261,6 +261,7 @@ static xdata unsigned char RampDIVCNT; //无极调光降低调光速度的分频计时器
 static bit IsRampKeyPressed;  //标志位，用户是否按下按键对无极调光进行调节
 static bit IsNotifyMaxRampLimitReached; //标记无极调光达到最大电流	
 static bit RampEnteredStillHold;    //无极调光进入后按键仍然按住
+static bit IsSingleCellEnterTurbo;  //是否1S电池进入极亮
 	
 //输入指定的Index，从index里面找到目标模式结构体并返回指针
 ModeStrDef *FindTargetMode(ModeIdxDef Mode,bool *IsResultOK)
@@ -292,7 +293,7 @@ void ModeFSMInit(void)
 	if(Result)
 		{
 		SysCfg.RampBattThres=CurrentMode->LowVoltThres; //低压检测上限恢复
-		SysCfg.RampCurrentLimit=IsEnable2SMode?QueryCurrentGearILED():1800;                   			//找到挡位数据中无极调光的挡位，电流上限恢复
+		SysCfg.RampCurrentLimit=IsEnable2SMode?QueryCurrentGearILED():SingleCellModeICCMAX;                   			//找到挡位数据中无极调光的挡位，电流上限恢复
 		if(SysCfg.RampCurrent<CurrentMode->MinCurrent)SysCfg.RampCurrent=CurrentMode->MinCurrent;
 		if(SysCfg.RampCurrent>SysCfg.RampCurrentLimit)SysCfg.RampCurrent=SysCfg.RampCurrentLimit;		//读取数据结束后，检查读入的数据是否合法，不合法就直接修正
 		CurrentMode=&ModeSettings[0]; 					//记忆重置为第一个档
@@ -305,6 +306,7 @@ void ModeFSMInit(void)
 	IsPauseStepDownCalc=0;                    //每次初始化clear掉暂停温控计算的标志位
 	IsNotifyMaxRampLimitReached=0;
 	RampEnteredStillHold=0;
+	IsSingleCellEnterTurbo=0;
 	RampDIVCNT=RampAdjustDividingFactor; 			//复位分频计数器	
 	ResetSOSModule(); 
 	BeaconFSM_Reset(); 
@@ -364,7 +366,13 @@ void ReturnToOFFState(void)
 		default:break;
 		}
   //执行挡位记忆并跳回到关机状态
-	if(CurrentMode->IsModeHasMemory)LastMode=CurrentMode->ModeIdx;
+	if(IsSingleCellEnterTurbo)
+		{
+		//1S模式下双击模拟进入极亮，退出时不覆写挡位记忆
+		IsSingleCellEnterTurbo=0;
+		SwitchToGear(Mode_OFF);
+		}
+	else if(CurrentMode->IsModeHasMemory)LastMode=CurrentMode->ModeIdx;
 	SwitchToGear(Mode_OFF); 
 	}	
 	
@@ -395,9 +403,9 @@ static void RampAdjHandler(void)
 	bit IsPress;
   //计算出无极调光上限
 	IsPress=getSideKey1HEvent()|getSideKeyHoldEvent();
-	Limit=IsEnable2SMode?QueryCurrentGearILED():1800;                    //双锂模式限制电流最大不能超过1.8A
+	Limit=IsEnable2SMode?QueryCurrentGearILED():SingleCellModeICCMAX;                    //双锂模式限制电流最大不能超过1.8A
 	Limit=SysCfg.RampCurrentLimit<Limit?SysCfg.RampCurrentLimit:Limit;
-	if(Limit<CurrentMode->Current&&IsPress&&SysCfg.RampCurrent>Limit)SysCfg.RampCurrent=Limit; //在电流被限制的情况下用户按下按键尝试调整电流，立即限幅
+	if(Limit<QueryCurrentGearILED()&&IsPress&&SysCfg.RampCurrent>Limit)SysCfg.RampCurrent=Limit; //在电流被限制的情况下用户按下按键尝试调整电流，立即限幅
 	//进行亮度调整
 	if(getSideKeyHoldEvent()&&!IsRampKeyPressed) //长按增加电流
 			{	
@@ -487,10 +495,14 @@ static void PowerToNormalMode(ModeIdxDef Mode)
 //尝试进入极亮和爆闪的处理
 void TryEnterTurboProcess(char Count)	
 	{
-	//非双击模式，退出
-  if(Count!=2)return;
-	//未开启2S模式，双击切换到1.8A挡位
-  if(!IsEnable2SMode)PowerToNormalMode(Mode_MHigh);
+	//非双击模式或者系统锁定，退出
+  if(Count!=2||IsSystemLocked)return;
+	//未开启2S模式，双击切换到1.8A挡位并使能标记位暂时禁用挡位记忆实现伪装的极亮
+  if(!IsEnable2SMode)
+			 {
+		   PowerToNormalMode(Mode_MHigh);
+			 if(CurrentMode->ModeIdx==Mode_MHigh)IsSingleCellEnterTurbo=1;
+			 }
 	//电池电量充足且没有触发关闭极亮的保护，正常开启
 	else if(CellVoltage>3450&&!IsDisableTurbo)
 			{
@@ -624,8 +636,8 @@ void ModeSwitchFSM(void)
 				  if(!IsEnable2SMode)
 						{
 						//1S模式下无极调光电流不能超过1.8A
-						if(SysCfg.RampCurrent>1800)SysCfg.RampCurrent=1800;
-						if(SysCfg.RampCurrentLimit>1800)SysCfg.RampCurrentLimit=1800;
+						if(SysCfg.RampCurrent>SingleCellModeICCMAX)SysCfg.RampCurrent=SingleCellModeICCMAX;
+						if(SysCfg.RampCurrentLimit>SingleCellModeICCMAX)SysCfg.RampCurrentLimit=SingleCellModeICCMAX;
 						}
 					//保存更改后的配置数据
 					SaveSysConfig(0);
@@ -715,7 +727,7 @@ void ModeSwitchFSM(void)
 					case 2:Current=200;break; //用200mA低亮提示告知用户已进入信标模式
 					default:
 						IsPauseStepDownCalc=0;     //正常输出的时候温控启动
-						Current=IsEnable2SMode?QueryCurrentGearILED():1800; //其他值调用系统默认电流正常输出
+						Current=IsEnable2SMode?QueryCurrentGearILED():SingleCellModeICCMAX; //其他值调用系统默认电流正常输出
 						break;
 					} 	
 			  break;
@@ -726,7 +738,7 @@ void ModeSwitchFSM(void)
 				break;
 		case Mode_Burn:
 			  //烧灼模式，按键按下立即使用最高电流，按键松开使用低电流点亮LD进行对焦
-			  if(!IsEnable2SMode)Current=getSideKeyHoldEvent()?1800:CurrentMode->MinCurrent;
+			  if(!IsEnable2SMode)Current=getSideKeyHoldEvent()?SingleCellModeICCMAX:CurrentMode->MinCurrent;
 				else Current=getSideKeyHoldEvent()?QueryCurrentGearILED():CurrentMode->MinCurrent;
 		    //烧灼模式下只有按下按键才打开温控计算
 		    if(Current==CurrentMode->MinCurrent)IsPauseStepDownCalc=1; //按键松开，暂停温控计算
@@ -753,10 +765,12 @@ void ModeSwitchFSM(void)
 		
 		//其他挡位使用设置值作为目标电流	
 		default:
-			  IsPauseStepDownCalc=0;              //其余挡位计算始终开启
+			  if(QueryCurrentGearILED()>1&&Current<450)IsPauseStepDownCalc=1;
+			  else IsPauseStepDownCalc=0;              //其余挡位计算始终开启
 			  Current=QueryCurrentGearILED();	
 		    break;
 		}
-	//系统处于单锂模式，限制电流值最高不能超过1.8A
-	if(!IsEnable2SMode&&Current>1800)Current=1800;
+	//输出通道运算结束后，限制电流值最高不能超过系统的安全限制值
+	if(!IsEnable2SMode&&Current>SingleCellModeICCMAX)Current=SingleCellModeICCMAX;
+	if(IsEnable2SMode&&Current>DualCellTurboCurrent)Current=DualCellTurboCurrent;
 	}
