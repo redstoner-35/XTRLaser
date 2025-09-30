@@ -91,10 +91,16 @@ void OutputChannel_Calc(void)
 				if(TargetCurrent<600)CurrentBuf=TargetCurrent;
 				else CurrentBuf=600;
 				}
-			else if(CurrentMode->ModeIdx==Mode_Beacon)CurrentBuf+=1000; //信标模式令电流快速增加
-			else if(CurrentMode->ModeIdx==Mode_SOS)CurrentBuf+=400;  //SOS模式下快速增加电流避免拖尾影响判断
-			else if(IsBurnMode)CurrentBuf+=50;                      //烧灼模式开启，迅速增加电流提高烧灼效果
-			else CurrentBuf+=2;
+			//系统电流不为0，立即开始增加电流
+			else if(IsBurnMode)CurrentBuf+=50;    //烧灼模式开启，迅速增加电流提高烧灼效果
+      else switch(CurrentMode->ModeIdx)
+				{
+				
+				case Mode_Beacon:CurrentBuf+=1000;break; //信标模式令电流快速增加
+				case Mode_SOS:
+				case Mode_SOS_NoProt:CurrentBuf+=400;break;  //SOS模式下快速增加电流避免拖尾影响判断
+				default:CurrentBuf+=2;											 //其余挡位电流默认缓慢增加
+				}
 			if(CurrentBuf>=TargetCurrent)
 				{
 				IsSlowRamp=0;

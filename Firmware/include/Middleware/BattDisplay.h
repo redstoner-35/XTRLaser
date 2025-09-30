@@ -39,7 +39,9 @@ typedef enum
 	BattVdis_ShowTempState	
 	}BattVshowFSMDef; //电池电量显示处理
 
-
+//参数
+#define EmergencySOSShowBattGap 5 //紧急SOS模式下显示电池电量的的间隔时间
+	
 //外部参考
 extern bit IsBatteryAlert; //电池低电警告发生
 extern bit IsBatteryFault; //电池低电量故障发生

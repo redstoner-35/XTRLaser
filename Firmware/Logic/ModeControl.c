@@ -104,7 +104,7 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
     //中高亮
 		{
 		Mode_MHigh,
-		SingleCellModeICCMAX,  //1.8A电流
+		SingleCellModeICCMAX,  //该挡位电流值根据LD的类型自动配置
 		0,   //最小电流没用到，无视
 		3100,  //3.1V关断
 		true,
@@ -121,7 +121,7 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
     //高亮
 		{
 		Mode_High,
-		2500,  //2.5A电流
+		2700,  //2.7A电流
 		0,   //最小电流没用到，无视
 		3200,  //3.2V关断
 		true,
@@ -206,7 +206,7 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
 	  //呼吸信标闪挡位
 		{
 		Mode_Breath,
-		3000,  //3A电流	
+		3100,  //3.1A电流	
 		160,   //呼吸模式最低160mA
 		3000,  //3V关断
 		false, //特殊挡位不能带记忆
@@ -223,7 +223,7 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
 		//定期快闪信标闪
 		{
 		Mode_Beacon,
-		3000,  //3A电流	
+		3100,  //3.1A电流	
 		0,   	 //最小电流没用到，无视
 		3000,  //3V关断
 		false, //特殊挡位不能带记忆
@@ -236,7 +236,24 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
 		//挡位切换设置
 		Mode_SOS,
 		Mode_Breath	 //模式挡位切换设置，长按和单击+长按切换到的目标挡位(输入OFF表示不进行切换)
-		}			
+		},
+		//无电量保护机制的紧急SOS模式
+		{
+		Mode_SOS_NoProt,
+		550,  //0.55A电流	
+		0,   //最小电流没用到，无视
+		2850,  //2.85V关断
+		false, //特殊挡位不能带记忆
+		false, //该挡位间歇工作且温度极低，不需要温控也能安全使用
+		//配置是否允许进入爆闪
+		false,
+		//低电量保护设置
+		Mode_SOS_NoProt,				 //低电量触发保护之后，如果不执行关机则自动跳转的挡位
+		LVPROT_Disable,        //低电量保护机制的类型
+		//挡位切换设置
+		Mode_OFF,
+		Mode_OFF	 //模式挡位切换设置，长按和单击+长按切换到的目标挡位(输入OFF表示不进行切换)
+		},		
 	};
 
 //全局变量(挡位)
@@ -256,12 +273,14 @@ xdata unsigned char HoldChangeGearTIM; //挡位模式下长按换挡
 xdata unsigned char DisplayLockedTIM; //锁定和战术模式进入退出显示
 
 //内部变量和标志位
+static xdata unsigned char LockINDTimer;  //锁定条件下临时使能激光的计时器
 static xdata unsigned int BurnModeTimer;  //点按超时计时器
 static xdata unsigned char RampDIVCNT; //无极调光降低调光速度的分频计时器		
 static bit IsRampKeyPressed;  //标志位，用户是否按下按键对无极调光进行调节
 static bit IsNotifyMaxRampLimitReached; //标记无极调光达到最大电流	
 static bit RampEnteredStillHold;    //无极调光进入后按键仍然按住
 static bit IsSingleCellEnterTurbo;  //是否1S电池进入极亮
+static bit IsDisplayLocked;         //是否开启锁定指示
 	
 //输入指定的Index，从index里面找到目标模式结构体并返回指针
 ModeStrDef *FindTargetMode(ModeIdxDef Mode,bool *IsResultOK)
@@ -306,6 +325,8 @@ void ModeFSMInit(void)
 	IsPauseStepDownCalc=0;                    //每次初始化clear掉暂停温控计算的标志位
 	IsNotifyMaxRampLimitReached=0;
 	RampEnteredStillHold=0;
+	IsDisplayLocked=0;
+	
 	IsSingleCellEnterTurbo=0;
 	RampDIVCNT=RampAdjustDividingFactor; 			//复位分频计数器	
 	ResetSOSModule(); 
@@ -323,6 +344,8 @@ void ModeFSMTIMHandler(void)
 		SysCfg.RampLimitReachDisplayTIM--;
 		if(!SysCfg.RampLimitReachDisplayTIM)IsNotifyMaxRampLimitReached=0;
 		}
+	//锁定模式下临时点动激光的超时计时器（防止激光一直按下）	
+	if(LockINDTimer)LockINDTimer--;
 	//烧灼模式超时计时器
 	if(BurnModeTimer)BurnModeTimer--;
 	//锁定操作提示计时器
@@ -345,6 +368,7 @@ void SwitchToGear(ModeIdxDef TargetMode)
 	//应用挡位结果并重新计算极亮电流,同时复位特殊挡位状态机
 	switch(TargetMode)
 		{
+		case Mode_SOS_NoProt:
 		case Mode_SOS:ResetSOSModule();break;
 		case Mode_Breath:BreathFSM_Reset();break;
 		case Mode_Beacon:BeaconFSM_Reset();break;
@@ -478,6 +502,11 @@ static void ProcessNClickAndHoldHandler(void)
 					}
 				else LEDMode=LED_RedBlinkFifth;	//手电处于关机状态下且电池电量不足，闪烁五次提示进不去	
 		    break;
+		case 5:
+			  //五击+长按进入无任何电量保护机制的应急SOS模式
+		    if(CurrentMode->ModeIdx!=Mode_OFF)break;
+		    SwitchToGear(Mode_SOS_NoProt);
+		    break;
 		//其余情况什么都不做
 		default:break;			
 		}
@@ -573,8 +602,28 @@ void ModeSwitchFSM(void)
 					if(CellVoltage>2850)DisplayLockedTIM=5;  //电池电压足够时令LD点亮0.5秒指示解锁成功
 					SaveSysConfig(0);
 					}
-				//其余按键事件，红色闪五次提示已锁定
-				else if(IsKeyEventOccurred())LEDMode=LED_RedBlinkFifth;
+				//锁定状态单击+长按，开启低功率的无害指示激光
+        else if(getSideKeyNClickAndHoldEvent()==1)
+					{
+					if(CellVoltage<2900)LockINDTimer=0; //电池电压异常，禁止激光器运行
+					else if(!IsDisplayLocked)
+						{
+						LockINDTimer=8*LockLowPowerIndTimeOut; //加载临时点亮超时计时器
+						IsDisplayLocked=1;                  	 //标记激光打开
+						}
+					}				
+				//当前没有单击+长按事件，检测是否有其他事件发生
+				else 
+					{
+					if(IsDisplayLocked)
+						{
+						//没有单击+长按事件，clear掉标志位并复位计时器
+						LockINDTimer=0;
+						IsDisplayLocked=0;
+						}
+				  //有其余按键事件，红色闪五次提示已锁定
+					if(IsKeyEventOccurred())LEDMode=LED_RedBlinkFifth;
+					}
 				//跳过其余处理
 				break;
 				}
@@ -689,6 +738,10 @@ void ModeSwitchFSM(void)
 					LastModeBeforeTurbo=Mode_Low;   //每次使用了极亮进入记忆则复位记忆
 					}
 		    break;		
+		case Mode_SOS_NoProt:
+			 //系统在关闭状态下电池电压低于2.5V后boost芯片就无法工作了，关机
+       if(!GetIfOutputEnabled()&&Data.RawBattVolt<2.50)ReturnToOFFState();		
+			  break;
     //烧灼模式
     case Mode_Burn:
 			  //系统过热达到退出极亮的标准或长时间无操作，系统关闭
@@ -713,8 +766,8 @@ void ModeSwitchFSM(void)
   //非烧灼模式，清除Burn位
 	if(IsBurnMode&&CurrentMode->ModeIdx!=Mode_Burn)IsBurnMode=0;
   //应用输出电流
-	if(DisplayLockedTIM)Current=200; //用户进入或者退出锁定，用100mA短暂点亮提示一下
-	else if(VChkFSMState!=VersionCheck_InAct)Current=VersionCheckFSM()?100:0; //版本提示触发
+	if(DisplayLockedTIM||(LockINDTimer&&IsDisplayLocked))Current=230; //用户进入或者退出锁定(包括锁定状态下单击+长按开启激光)，用230mA短暂点亮提示一下
+	else if(VChkFSMState!=VersionCheck_InAct)Current=VersionCheckFSM()?150:0; //版本提示触发，开始播报
 	else if(LowPowerStrobe())Current=30; //触发低压报警，短时间闪烁提示
 	else switch(CurrentMode->ModeIdx)
 		{
@@ -748,7 +801,8 @@ void ModeSwitchFSM(void)
 					BurnModeTimer=8*BurnModeTimeOut;
 					IsPauseStepDownCalc=0;
 					}
-				break; 			
+				break; 		
+    case Mode_SOS_NoProt:					
 		case Mode_SOS:
 				//SOS模式电流由状态机控制
 			  Current=SOSFSM()?QueryCurrentGearILED():0;

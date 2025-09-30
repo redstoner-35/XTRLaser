@@ -14,13 +14,13 @@
 	#define OVPVolt 17.0
 	#define DCDCStartVolt 11.0
 
-#elif define(USING_LD_NUBB37)
+#elif defined(USING_LD_NUBB37)
 
 	//使用NUBB27/37 五管455nm LD
 	#define OVPVolt 21.0
 	#define DCDCStartVolt 14.0
 
-#elif define(USING_LD_NURM11T)
+#elif defined(USING_LD_NURM11T)
 	
 	//使用NURM11T 四管双束638nm LD
 	#define OVPVolt 10.0

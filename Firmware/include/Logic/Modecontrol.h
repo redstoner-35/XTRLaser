@@ -37,7 +37,8 @@ typedef enum
 	Mode_Focus=9, //对焦专用档
 	Mode_Burn=10, //烧东西专用档
 	Mode_Breath=11, //呼吸模式
-	Mode_Beacon=12  //间歇闪模式
+	Mode_Beacon=12,  //间歇闪模式
+	Mode_SOS_NoProt=13 //无保护SOS模式
 	}ModeIdxDef;
 	
 
@@ -76,16 +77,16 @@ extern bit IsEnable2SMode;    //是否开启双锂模式
 #ifdef USING_LD_NUBB33
 	
 	//使用NUBB13/23/33 四管455nm LD
-	#define SingleCellModeICCMAX 1800
-	#define DualCellTurboCurrent 4100
+	#define SingleCellModeICCMAX 1900
+	#define DualCellTurboCurrent 4250
 
-#elif define(USING_LD_NUBB37) 
+#elif defined(USING_LD_NUBB37) 
 
 	//使用NUBB27/37 五管455nm LD	
 	#define SingleCellModeICCMAX 1500
 	#define DualCellTurboCurrent 3750
 	
-#elif define(USING_LD_NURM11T)
+#elif defined(USING_LD_NURM11T)
 	
 	//使用NURM11T 四管双束638nm LD
 	#define SingleCellModeICCMAX 1800
@@ -103,11 +104,12 @@ extern bit IsEnable2SMode;    //是否开启双锂模式
 #define QueryCurrentGearILED() CurrentMode->Current //获取当前挡位的电流函数
 	
 //参数配置
+#define LockLowPowerIndTimeOut 20 //锁定模式下临时点亮的超时时间
 #define BurnModeTimeOut 60 //烧灼模式无操作自动退出的时间
 #define RampAdjustDividingFactor 5 //无极调光模式下控制调光速度的分频比例，越大则调光速度越慢
 #define HoldSwitchDelay 6 // 长按换挡延迟	
 #define SleepTimeOut 5 //休眠状态延时	
-#define ModeTotalDepth 13 //系统一共有几个挡位			
+#define ModeTotalDepth 14 //系统一共有几个挡位			
 	
 //函数
 ModeStrDef *FindTargetMode(ModeIdxDef Mode,bool *IsResultOK);//输入指定的Index，从index里面找到目标模式结构体并返回指针

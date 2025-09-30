@@ -17,6 +17,7 @@ bit IsBatteryFault; //电池电压低于保护值
 static xdata unsigned char BattShowTimer; //电池电量显示计时
 static xdata AverageCalcDef BattVolt;	
 static xdata unsigned char LowVoltStrobeTIM;
+static xdata unsigned char EmerSosShowBattStateTimer=0; //紧急求救模式下显示电池状态的计时器
 static xdata int VbattSample; //取样的电池电压
 static xdata unsigned char Show2SModeTIM;   //显示2S模式计时处理
 static bit IsReportingTemperature=0; //报告温度
@@ -73,8 +74,23 @@ void TriggerVshowDisplay(void)
 //生成低电量提示报警
 bit LowPowerStrobe(void)
 	{
-	//电量正常或者是SOS模式（为了避免干扰SOS显示）不启动计时
-	if(BattState!=Battery_VeryLow||CurrentMode->ModeIdx==Mode_SOS)LowVoltStrobeTIM=0;
+	bit IsStartLowStrobe;
+	//判断是否满足启动低电量报警快闪	
+	if(BattState!=Battery_VeryLow)IsStartLowStrobe=0; //电池电量正常，禁止闪烁
+	else switch(CurrentMode->ModeIdx)
+		{
+		case Mode_OFF:	
+		case Mode_Fault:IsStartLowStrobe=0;break; //关机和故障状态下禁止显示 
+		case Mode_Breath:
+		case Mode_SOS:
+		case Mode_Beacon:
+		case Mode_SOS_NoProt:IsStartLowStrobe=0;break; //特殊挡位下禁止低电量提示闪
+		//其余默认挡位
+		default:IsStartLowStrobe=1; //其他挡位，开启显示
+		}
+
+	//不满足提示触发条件，不启动计时
+	if(!IsStartLowStrobe)LowVoltStrobeTIM=0;
 	//电量异常开始计时
 	else if(!LowVoltStrobeTIM)LowVoltStrobeTIM=1; //启动计时器
 	else if(LowVoltStrobeTIM>((LowVoltStrobeGap*8)-4))return 1; //触发闪烁标记电流为0
@@ -142,6 +158,27 @@ static void SetPowerLEDBasedOnVbatt(void)
 		 case Battery_Low:LEDMode=LED_Red;break;//电池电量不足
 		 case Battery_VeryLow:LEDMode=LED_RedBlink;break; //电池电量严重不足红色慢闪
 		}
+	}
+
+//在手电工作时根据系统状态显示电池状态
+static void ShowBatteryState(void)	
+	{
+	bit IsShowBatteryState;
+	//锁定模式下电池电量不显示	
+	if(IsSystemLocked)IsShowBatteryState=0;
+	//非紧急求救挡位，正常显示
+	else if(CurrentMode->ModeIdx!=Mode_SOS_NoProt)IsShowBatteryState=1;
+	//紧急求救挡位下如果电池电量严重过低，显示
+	else if(BattState==Battery_VeryLow)IsShowBatteryState=1;
+	//紧急求救挡位下基于计时器正常显示电量
+	else
+		{
+		if(!EmerSosShowBattStateTimer)EmerSosShowBattStateTimer=3+(8*EmergencySOSShowBattGap);
+		IsShowBatteryState=EmerSosShowBattStateTimer>3?0:1;
+		}		
+	//根据结果选择是否调用函数显示电量	
+	if(IsShowBatteryState)SetPowerLEDBasedOnVbatt();
+	else LEDMode=LED_OFF;  //非显示状态需要保持LED熄灭
 	}
 
 //电池采样显示电压
@@ -383,7 +420,8 @@ void BattDisplayTIM(void)
 	else if(LowVoltStrobeTIM)LowVoltStrobeTIM++;
 	//电池电压显示的计时器处理	
 	if(CommonSysFSMTIM)CommonSysFSMTIM--;
-	//电池显示定时器
+	//电池显示和紧急求救模式暂停显示的定时器
+	if(EmerSosShowBattStateTimer)EmerSosShowBattStateTimer--;
 	if(BattShowTimer)BattShowTimer--;
 	}
 
@@ -411,7 +449,7 @@ void BatteryTelemHandler(void)
 	if(IsOneTimeStrobe())return; //为了避免干扰只工作一次的频闪指示，不执行控制 
 	if(ErrCode!=Fault_None)DisplayErrorIDHandler(); //有故障发生且并非应急允许开机的故障码，显示错误
 	else if(VshowFSMState!=BattVdis_Waiting)BatVshowFSM();//电池电压显示启动，执行状态机
-	else if(BattShowTimer||CurrentMode->ModeIdx>1)SetPowerLEDBasedOnVbatt(); //用户查询电量或者手电开机，指示电量
+	else if(BattShowTimer||CurrentMode->ModeIdx>1)ShowBatteryState(); //用户查询电量或者手电开机，指示电量
   else LEDMode=LED_OFF; //手电处于关闭状态，且没有按键按下的动静，故LED设置为关闭
 	}
 	

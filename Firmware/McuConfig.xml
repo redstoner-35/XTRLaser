@@ -3,7 +3,7 @@
 <power>1</power>
 <config>
 <data>0xFF</data>
-<data>0xDF</data>
+<data>0xFF</data>
 <data>0xFF</data>
 <data>0xFA</data>
 <data>0xFC</data>
