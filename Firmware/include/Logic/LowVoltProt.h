@@ -1,13 +1,9 @@
 #ifndef _LVProt_
 #define _LvProt_
 
+//内部包含
 #include "stdbool.h"
 #include "ModeControl.h"
-
-//参数配置
-#define BatteryMaximumTurboVdroop 1.4  //极亮启动过程中，电池最大允许的和运行前的压差(V)
-#define BatteryAlertDelay 10 //电池警报延迟	
-#define BatteryFaultDelay 2 //电池故障强制跳档/关机的延迟
 
 //函数
 void RuntimeUpdateTo2S(void); //动态检测电池电压并更新到2S

@@ -1,3 +1,15 @@
+/****************************************************************************/
+/** \file main.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件负责系统的主函数处理
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "cms8s6990.h"
 #include "GPIO.h"
 #include "delay.h"
@@ -5,6 +17,7 @@
 #include "LEDMgmt.h"
 #include "ADCCfg.h"
 #include "PWMCfg.h"
+#include "LVDCtrl.h"
 #include "SysReset.h"
 #include "LowVoltProt.h"
 #include "TempControl.h"
@@ -15,16 +28,23 @@
 #include "BreathMode.h"
 #include "Beacon.h"
 
-//睡眠处理
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
+bit TaskSel=0;  //选择处理的系统任务
+
+/****************************************************************************/
+/*	External Function prototypes definition
+****************************************************************************/
 void SleepMgmt(void);
 void MaskUnusedIO(void);
 
 //主函数
 void main()
 	{
-	bit TaskSel=0;
 	//时钟和RSTCU初始化	
 	ClearSoftwareResetFlag();
+	LVD_Disable(); 				 //启动系统前每次确保WUT处于一个已知状态
   StartSystemTimeBase(); //启动系统定时器提供系统定时和延时函数
 	//初始化外设
 	ADC_Init(); //初始化ADC

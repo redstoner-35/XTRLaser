@@ -1,3 +1,16 @@
+/****************************************************************************/
+/** \file SelfTest.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件是顶层应用层文件，负责实现驱动对输出的运行监控和错误汇
+报系统，在系统出现故障时立即关闭并进入保护模式避免LD损毁。
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "LEDMgmt.h"
 #include "delay.h"
 #include "ADCCfg.h"
@@ -6,6 +19,10 @@
 #include "SelfTest.h"
 #include "LowVoltProt.h"
 #include "OutputChannel.h"
+
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
 
 //系统保护电压自动定义，不得修改！！！
 #ifdef USING_LD_NUBB33
@@ -30,22 +47,47 @@
   #error "You should define which LD Type you want to use at Project Definition Space!"
 #endif
 
-//内部变量
-static xdata unsigned char ErrDisplayIndex; //错误显示计时
-static xdata unsigned char ShortDetectTIM=0; //短路监测计时器
-static xdata unsigned char ShortBlankTIM; //短路blank定时器
+//其余的参数
+#define FaultBlankingInterval 4 //系统开始运行的时候进行故障报告消隐的时间(每单位0.125S)
+
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
+xdata FaultCodeDef ErrCode; //错误代码	
+
+/****************************************************************************/
+/*	Local constant definitions('static const')
+****************************************************************************/
+
 static code FaultCodeDef NonCriticalFault[]={ //非致命的错误代码
 	Fault_DCDCOpen,
   Fault_DCDCShort, //开路和短路可能是误报，允许消除
   Fault_InputOVP
 	};
-	
-//外部全局参考
-xdata FaultCodeDef ErrCode; //错误代码	
 
-//查询错误是否致命
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
+static xdata unsigned char ErrDisplayIndex; //错误显示计时
+static xdata unsigned char ShortDetectTIM=0; //短路监测计时器
+static xdata unsigned char ShortBlankTIM; //短路blank定时器
+
+/****************************************************************************/
+/*	Function implementation - local('static')
+****************************************************************************/
+
+static char ErrTIMCounter(char buf,char Count)	//内部函数，故障计数器
+	{
+	//累加计数器
+	return buf<8?buf+Count:8;
+	}
+/****************************************************************************/
+/*	Function implementation - global ('extern')
+****************************************************************************/
+
 bit IsErrorFatal(void)	
 	{
+	//查询错误是否致命
 	unsigned char i;
 	for(i=0;i<sizeof(NonCriticalFault);i++)
 		if(NonCriticalFault[i]==ErrCode)return 0;
@@ -98,12 +140,6 @@ void DisplayErrorIDHandler(void)
 		else LEDMode=LED_OFF;  //按照错误ID闪烁指定次数
 		}
   else LEDMode=LED_OFF; //LED熄灭
-	}
-//内部函数，故障计数器
-static char ErrTIMCounter(char buf,char Count)
-	{
-	//累加计数器
-	return buf<8?buf+Count:8;
 	}
 
 //输出故障检测

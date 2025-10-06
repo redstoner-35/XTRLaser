@@ -1,3 +1,16 @@
+/****************************************************************************/
+/** \file TempControl.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件是顶层应用层文件，负责根据系统温度动态调整输出功率在最大
+限度利用外壳散热能力的同时避免系统过热。
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "ADCCfg.h"
 #include "LEDMgmt.h"
 #include "delay.h"
@@ -10,6 +23,55 @@
 #include "SelfTest.h"
 #include "FastOp.h"
 
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+
+//PI环参数和最小电流限制
+#define ILEDRecoveryTime 120 //使用积分器缓慢升档的判断时长，如果积分器持续累加到这个时长，则执行一次调节(单位秒)
+#define SlowStepDownTime 60 //使用积分器缓慢降档的判断时长，如果积分器持续累加到这个时长，则执行一次调节(单位秒)
+#define IntegralCurrentTrimValue 2500 //积分器针对输出的电流修调的最大值(mA)
+#define IntegralFactor 12 //积分系数(每单位=1/8秒，越大时间常数越高，6=每分钟进行40mA的调整)
+#define MinumumILED 390 //降档系统所能达到的最低电流(mA)
+
+//常亮电流配置
+#define ILEDConstant 750 //降档系统内温控的常亮电流设置(mA)
+#define ILEDConstantFoldback 500 //在接近温度极限时的降档系统内的常亮电流设置(mA)
+
+//温度配置
+#define ForceOffTemp 65 //过热关机温度
+#define ForceDisableTurboTemp 50 //超过此温度无法进入极亮
+#define ConstantTemperature 46 //非极亮挡位温控启动后维持的温度
+#define ReleaseTemperature 35 //温控释放的温度
+#define LeaveTurboTemperature ForceOffTemp-10   //退出极亮温度为关机保护温度-10
+
+/*   积分器满量程自动定义，切勿修改！    */
+#define IntegrateFullScale IntegralCurrentTrimValue*IntegralFactor
+
+#if (IntegrateFullScale > 32000)
+	//算出的积分器量程大于32000，非法值
+	#error "Error 001:Invalid Integral Configuration,Trim Value or time-factor out of range!"
+#endif
+
+#if (IntegrateFullScale <= 0)
+	//算出的积分器量程为0值，报错
+	#error "Error 002:Invalid Integral Configuration,Trim Value or time-factor must not be zero or less than zero!"
+#endif
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
+
+bit IsPauseStepDownCalc; //是否暂停温控的计算流程（该bit=1不会强制复位整个温控系统，但是会暂停计算）
+bit IsDisableTurbo;  //禁止再度进入到极亮档
+bit IsForceLeaveTurbo; //是否强制离开极亮档
+
+/****************************************************************************/
+/*	Local type definitions('typedef')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
 //内部变量
 static xdata int TempIntegral;
 static xdata int TempProtBuf;
@@ -21,16 +83,52 @@ static bit IsThermalStepDown; //标记位，是否降档
 static bit IsTempLIMActive;  //温控是否已经启动
 static bit IsSystemShutDown; //是否触发温控强制关机
 
-//外部状态位
-bit IsPauseStepDownCalc; //是否暂停温控的计算流程（该bit=1不会强制复位整个温控系统，但是会暂停计算）
-bit IsDisableTurbo;  //禁止再度进入到极亮档
-bit IsForceLeaveTurbo; //是否强制离开极亮档
+/****************************************************************************/
+/*	Function implementation - local('static')
+****************************************************************************/
 
-//内部宏定义
-#define LeaveTurboTemperature ForceOffTemp-10   //退出极亮温度为关机保护温度-10
+static void ThermalIntegralHandler(bool IsStepDown,bool IsEnableFastAdj)	//温控系统中积分追踪温度变化实现恒亮的处理
+	{
+	int Buf;
+	//条件定义，如果积分值小于上限且系统需要快速调整，则令积分器以和温度挂钩的可变速率工作
+	#define IsEnableQuickItg (abs(TempIntegral)<(IntegrateFullScale-Buf)&&IsEnableFastAdj)
+	//计算温度差和积分数值
+	if(IsStepDown)Buf=Data.Systemp-(LeaveTurboTemperature-8);
+	else Buf=(ReleaseTemperature+5)-Data.Systemp; //降档模式下系统温度误差值为强制极亮的温度-8，升档模式为恢复温度+5
+	if(IsNegative16(Buf))Buf=0; //温度差不能为负数
+	//进行积分器本次调整值的计算
+	if(IsEnableQuickItg)Buf<<=1;      //快速调整开启,令调整值=温差*2
+	else Buf=0;
+	Buf++;  													//这里需要保证Buf始终为1(快速调整被禁用后调整值将会变为0)确保积分器正常响应
+  //应用积分数值到积分缓存
+	TempIntegral+=(IsStepDown?Buf:-Buf);
+	#undef IsEnableQuickItg            //这个宏定义只是该函数的局部定义，需要在函数末尾禁用掉避免后续意外使用到导致问题
+	}
+	
+//系统低于常亮电流，进入积分器缓慢追踪系统温度的时候把超过积分器量程的部分push到比例器去，腾出积分器并继续追踪的模块
+static void ThermalIntegralCommitToProtHandler(void)	
+	{
+	//当前积分器累计的参数小于复位时间，退出
+	if(abs(TempIntegral)<(ILEDRecoveryTime*8))return;
+	//将积分器内累积的变化成比例应用到比例项并清零积分器
+	TempProtBuf+=TempIntegral/IntegralFactor;
+	TempIntegral=0;						
+	}
 
-//获取系统是否触发降档
-bit QueryIsThermalStepDown(void)
+//负责温度使能控制的施密特触发器
+static bit TempSchmittTrigger(bit ValueIN,char HighThreshold,char LowThreshold)	
+	{
+	if(Data.Systemp>HighThreshold)return 1;
+	if(Data.Systemp<LowThreshold)return 0;
+	//数值保持，没有改变
+	return ValueIN;
+	}
+
+/****************************************************************************/
+/*	Function implementation - global ('extern')
+****************************************************************************/
+
+bit QueryIsThermalStepDown(void)	//获取系统是否触发降档
 	{
 	//当前处于电量显示状态不允许打断降档提示
 	if(VshowFSMState!=BattVdis_Waiting)return 0; 
@@ -87,34 +185,6 @@ int ThermalILIMCalc(void)
 		}
 	//返回结果	                               
 	return result; 
-	}
-
-//温控系统中积分追踪温度变化实现恒亮的处理
-static void ThermalIntegralHandler(bool IsStepDown,bool IsEnableFastAdj)
-	{
-	int Buf;
-	//条件定义，如果积分值小于上限且系统需要快速调整，则令积分器以和温度挂钩的可变速率工作
-	#define IsEnableQuickItg (abs(TempIntegral)<(IntegrateFullScale-Buf)&&IsEnableFastAdj)
-	//计算温度差和积分数值
-	if(IsStepDown)Buf=Data.Systemp-(LeaveTurboTemperature-8);
-	else Buf=(ReleaseTemperature+5)-Data.Systemp; //降档模式下系统温度误差值为强制极亮的温度-8，升档模式为恢复温度+5
-	if(IsNegative16(Buf))Buf=0; //温度差不能为负数
-	//进行积分器本次调整值的计算
-	if(IsEnableQuickItg)Buf<<=1;      //快速调整开启,令调整值=温差*2
-	else Buf=0;
-	Buf++;  													//这里需要保证Buf始终为1(快速调整被禁用后调整值将会变为0)确保积分器正常响应
-  //应用积分数值到积分缓存
-	TempIntegral+=(IsStepDown?Buf:-Buf);
-	#undef IsEnableQuickItg            //这个宏定义只是该函数的局部定义，需要在函数末尾禁用掉避免后续意外使用到导致问题
-	}
-	
-static void ThermalIntegralCommitToProtHandler(void)	
-	{
-	//当前积分器累计的参数小于复位时间，退出
-	if(abs(TempIntegral)<(ILEDRecoveryTime*8))return;
-	//将积分器内累积的变化成比例应用到比例项并清零积分器
-	TempProtBuf+=TempIntegral/IntegralFactor;
-	TempIntegral=0;						
 	}
 
 //温控PI环计算
@@ -221,15 +291,6 @@ void ThermalPILoopCalc(void)
 			ThermalIntegralHandler(false,IsSwitchToITGTrack); //电流大于常亮值进入积分模式时使能快速调整
 			}
 		}
-	}
-
-//负责温度使能控制的施密特触发器
-static bit TempSchmittTrigger(bit ValueIN,char HighThreshold,char LowThreshold)	
-	{
-	if(Data.Systemp>HighThreshold)return 1;
-	if(Data.Systemp<LowThreshold)return 0;
-	//数值保持，没有改变
-	return ValueIN;
 	}
 
 //温度管理函数

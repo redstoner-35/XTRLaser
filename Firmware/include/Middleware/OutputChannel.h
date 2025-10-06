@@ -1,14 +1,8 @@
 #ifndef _OCH_
 #define _OCH_
 
-//输出通道参数设置
-#define MainChannelShuntmOhm 10 //主通道的检流电阻阻值(mR)
-
-//PWMDAC参数配置
-#define VdivUpResK 220 //运放分压部分的上端电阻(KΩ)
-#define PWMDACResK 10 //PWMDAC的电阻阻值(KΩ)
-#define VdivDownResK 5.1 //运放分压部分的下端电阻(KΩ)
-#define CurrentOffset 99.2 //高电流通道下的电流偏差值(单位%)
+//输出欠压参数配置
+#define BoostChipUVLO 2.45f     //驱动内部boost芯片所能维持运行的最小UVLO电压(V)，低于此电压后系统强制关闭
 
 //外部参考
 extern xdata int Current; //电流值

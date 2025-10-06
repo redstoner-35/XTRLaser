@@ -1,3 +1,16 @@
+/****************************************************************************/
+/** \file OutputChannel.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件为中层设备驱动文件，负责根据上层逻辑层反馈的目标输出电流
+值计算并操控PWMDAC输出指定的LD电流并完成LD的软起动保护功能。
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "cms8s6990.h"
 #include "PinDefs.h"
 #include "GPIO.h"
@@ -8,17 +21,56 @@
 #include "ADCCfg.h"
 #include "TempControl.h"
 
-//内部SFR
-sbit DCDCEN=DCDCENIOP^DCDCENIOx; //DCDC使能功能
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
 
-//外部全局参考
+//PWMDAC参数配置
+#define VdivUpResK 220 //运放分压部分的上端电阻(KΩ)
+#define PWMDACResK 10 //PWMDAC的电阻阻值(KΩ)
+#define VdivDownResK 5.1 //运放分压部分的下端电阻(KΩ)
+#define CurrentOffset 99.2 //高电流通道下的电流偏差值(单位%)
+
+//输出主通道参数设置
+#define MainChannelShuntmOhm 10 //主通道的检流电阻阻值(mR)
+
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
 xdata int Current; //目标电流(mA)
 xdata int CurrentBuf; //存储当前已经上传的电流值 
 
-//内部buf
+/****************************************************************************/
+/*	Local type definitions('typedef')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Local variable and SFR definitions('static and sfr')
+****************************************************************************/
 static bit IsDCDCEnabled; //DCDC是否使能
 static bit IsSlowRamp; //开启慢速Ramp
 
+sbit DCDCEN=DCDCENIOP^DCDCENIOx; //DCDC使能Pin
+/****************************************************************************/
+/*	Function implementation - local('static')
+****************************************************************************/
+static float Duty_Calc(int CurrentInput)		//内部用于计算PWMDAC占空比的函数	
+	{
+	float buf;
+	//计算实际占空比
+	buf=(float)CurrentInput*(float)MainChannelShuntmOhm; //输入传进来的电流(mA)并乘以检流电阻阻值(mR)得到运放端整定电压(uV)
+	buf/=(float)1000; //uV转mV
+	buf/=((float)VdivDownResK/(float)(VdivUpResK+VdivDownResK+PWMDACResK)); //将运放端整定电压除以电阻的分压比例得到DAC端的电压
+	buf*=(float)CurrentOffset/(float)100; //乘以矫正系数修正电流
+	buf/=Data.MCUVDD*(float)1000; //计算出目标DAC输出电压和PWMDAC缓冲器供电电压(MCUVDD)之间的比值
+	buf*=100; //转换为百分比
+	//结果输出	
+	return buf>100?100:buf;
+	}
+
+/****************************************************************************/
+/*	Function implementation - global ('extern')
+****************************************************************************/
 //获取输出是否开启
 bit GetIfOutputEnabled(void)
 	{
@@ -42,21 +94,6 @@ void OutputChannel_Init(void)
 	CurrentBuf=0;
 	IsDCDCEnabled=0;
 	IsSlowRamp=0;
-	}
-
-//内部用于计算PWMDAC占空比的函数	
-static float Duty_Calc(int CurrentInput)
-	{
-	float buf;
-	//计算实际占空比
-	buf=(float)CurrentInput*(float)MainChannelShuntmOhm; //输入传进来的电流(mA)并乘以检流电阻阻值(mR)得到运放端整定电压(uV)
-	buf/=(float)1000; //uV转mV
-	buf/=((float)VdivDownResK/(float)(VdivUpResK+VdivDownResK+PWMDACResK)); //将运放端整定电压除以电阻的分压比例得到DAC端的电压
-	buf*=(float)CurrentOffset/(float)100; //乘以矫正系数修正电流
-	buf/=Data.MCUVDD*(float)1000; //计算出目标DAC输出电压和PWMDAC缓冲器供电电压(MCUVDD)之间的比值
-	buf*=100; //转换为百分比
-	//结果输出	
-	return buf>100?100:buf;
 	}
 	
 //输出通道计算

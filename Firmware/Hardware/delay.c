@@ -1,14 +1,71 @@
+/****************************************************************************/
+/** \file delay.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件负责实现系统中所需的等效8Hz心跳计时器和各种大小延时的处
+理
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "cms8s6990.h"
 #include "delay.h"
-#include "PinDefs.h"
-#include "SideKey.h"
-#include "GPIO.h"
 
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
 volatile bit SysHFBitFlag; //高频心跳Flag(65.5mS)
+
+/****************************************************************************/
+/*	Local type definitions('typedef')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
 static bit IntDivFlag; //内部分频flag
-volatile bit IsT0OVF; //T0已溢出
+static volatile bit IsT0OVF; //T0已溢出
+
+/****************************************************************************/
+/*	Interrupt Handler functions(Process Timer Interrupts)
+****************************************************************************/
+void Timer2_IRQHandler(void) interrupt TMR2_VECTOR	//系统心跳定时器的中断处理
+{ 
+	//清零T2中断
+	T2IF=0x00; 
+  //进行爆闪2分频
+  IntDivFlag=~IntDivFlag; //TStrobe=31.25*2=62.5mS
+	if(IntDivFlag)SysHFBitFlag=1;  //每62.5mS将flag置1
+}		
+	
+void Timer0_IRQHandler(void) interrupt TMR0_VECTOR  //软件延时定时器的中断处理
+{
+  TCON&=0xEF; //清除溢出标记位
+	IsT0OVF=1;
+} 	
+
+/****************************************************************************/
+/*	Function implementation - global ('extern') and local('static')
+****************************************************************************/
 
 #ifndef UseUnifiedSystemTimeBase
+//延时初始化
+void delay_init(void)
+	{	
+	TCON&=0xCF; //清除溢出标记位，关闭定时器
+	TMOD&=0xF0;
+	TMOD|=0x01; //T0设置为使用Fext,16bit向上计数模式
+	TH0=0x00;
+	TL0=0x00; //初始化数值
+	IE=0x82; //令ET0=1，启用定时中断,EA=1，启用全局总中断
+	}
 //8Hz定时器初始化
 void EnableSysHBTIM(void)
 	{
@@ -55,35 +112,8 @@ void StartSystemTimeBase(void)
 	IntDivFlag=0;	 //复位所有flag
 	T2CON=0x91; //设置T2时钟源为fSys/24=1MHz，定时器立即启动
 	}
-#endif	
-//系统心跳定时器的中断处理	
-void Timer2_IRQHandler(void) interrupt TMR2_VECTOR
-{ 
-	T2IF=0x00; //清零T2中断
-  //进行爆闪2分频
-  IntDivFlag=~IntDivFlag; //TStrobe=31.25*2=62.5mS
-	if(IntDivFlag)SysHFBitFlag=1;  //每62.5mS将flag置1
-}		
-	
-//软件延时定时器的中断处理
-void Timer0_IRQHandler(void) interrupt TMR0_VECTOR  //0x0B 
-{
-  TCON&=0xEF; //清除溢出标记位
-	IsT0OVF=1;
-} 	
-	
-#ifndef UseUnifiedSystemTimeBase
-//延时初始化
-void delay_init(void)
-	{	
-	TCON&=0xCF; //清除溢出标记位，关闭定时器
-	TMOD&=0xF0;
-	TMOD|=0x01; //T0设置为使用Fext,16bit向上计数模式
-	TH0=0x00;
-	TL0=0x00; //初始化数值
-	IE=0x82; //令ET0=1，启用定时中断,EA=1，启用全局总中断
-	}
-#endif
+#endif		
+
 //1ms延时
 void delay_ms(int ms)
 	{

@@ -1,21 +1,64 @@
+/****************************************************************************/
+/** \file PWM.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件负责实现系统对外输出PWM的配置以实现PWMDAC功能控制激光器
+的电流和亮度
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "cms8s6990.h"
 #include "PinDefs.h"
 #include "GPIO.h"
 #include "PWMCfg.h"
 
-//全局变量
-xdata float CCDACTargetDuty;
-bit IsNeedToUploadPWM; //是否需要更新PWM
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+#define PWM_Enable() 	PWMFBKC=0x00;PWMCNTE=0x01 //使能通道0的计数器，PWM开始运行(PWM使能操作)
+#define SysFreq 48000000 //系统时钟频率(单位Hz)
+#define PWMFreq 6000 //PWM频率(单位Hz)	
+#define PWMStepConstant (SysFreq/PWMFreq)-1 //PWM周期自动定义
 
-//内部变量
-static bit IsPWMLoading; //PWM正在加载中
+#if (PWMStepConstant > 0xFFFE)
+  //自动检测PWM的数值是否合法
+	#error "PWM Frequency is too low which causing PWM Counter to overflow!"
+#endif
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
+xdata float CCDACTargetDuty;	//目标PWM占空比(%)
+bit IsNeedToUploadPWM; 				//是否需要更新PWM
+
+/****************************************************************************/
+/*	Local type definitions('typedef')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Local variable and SFR definitions('static and sfr')
+****************************************************************************/
+static bit IsPWMLoading; 				 //PWM正在加载中
 static bit IsNeedToEnableOutput; //是否需要启用输出
 
-//内部Sbit
 sbit PWMOut=PWMIOP^PWMIOx;
+/****************************************************************************/
+/*	Local function prototypes('static')
+****************************************************************************/
 
-//关闭PWM定时器
-void PWM_DeInit(void)
+static void UploadPWMValue(void)	//上传PWM值
+	{
+	PWMLOADEN=0x01; //加载通道0的PWM值
+	while(PWMLOADEN&0x01); //等待加载结束
+	}
+/****************************************************************************/
+/*	Function implementation - global ('extern') and local('static')
+****************************************************************************/
+
+void PWM_DeInit(void)	//关闭PWM定时器
 	{
 	//配置为普通GPIO
 	GPIO_SetMUXMode(PWMIOG,PWMIOx,GPIO_AF_GPIO);
@@ -27,15 +70,7 @@ void PWM_DeInit(void)
 	PWM01PSC=0x00;  //关闭PWM分频器时钟
 	}
 
-//上传PWM值
-static void UploadPWMValue(void)	
-	{
-	PWMLOADEN=0x01; //加载通道0的PWM值
-	while(PWMLOADEN&0x01); //等待加载结束
-	}
-		
-//PWM定时器初始化
-void PWM_Init(void)
+void PWM_Init(void)	//PWM定时器初始化
 	{
 	GPIOCfgDef PWMInitCfg;
 	//设置结构体
@@ -73,8 +108,7 @@ void PWM_Init(void)
   GPIO_SetMUXMode(PWMIOG,PWMIOx,GPIO_AF_PWMCH0);
 	}
 
-//根据PWM结构体内的配置进行输出
-void PWM_OutputCtrlHandler(void)	
+void PWM_OutputCtrlHandler(void)	//根据PWM结构体内的配置进行输出
 	{
 	int value;
 	float buf;

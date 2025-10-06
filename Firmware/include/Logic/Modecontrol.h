@@ -102,13 +102,6 @@ extern bit IsEnable2SMode;    //是否开启双锂模式
 
 //特殊宏定义
 #define QueryCurrentGearILED() CurrentMode->Current //获取当前挡位的电流函数
-	
-//参数配置
-#define LockLowPowerIndTimeOut 20 //锁定模式下临时点亮的超时时间
-#define BurnModeTimeOut 60 //烧灼模式无操作自动退出的时间
-#define RampAdjustDividingFactor 5 //无极调光模式下控制调光速度的分频比例，越大则调光速度越慢
-#define HoldSwitchDelay 6 // 长按换挡延迟	
-#define SleepTimeOut 5 //休眠状态延时	
 #define ModeTotalDepth 14 //系统一共有几个挡位			
 	
 //函数

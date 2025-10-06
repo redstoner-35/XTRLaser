@@ -1,3 +1,16 @@
+/****************************************************************************/
+/** \file SysConfig.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件为中层设备驱动文件，负责实现系统非易失性数据的结构化归档
+存储和上电时的数据读入，实现非易失性存储
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "cms8s6990.h"
 #include "ModeControl.h"
 #include "SysConfig.h"
@@ -9,35 +22,85 @@
 #include "OutputChannel.h"
 #include "ADCCfg.h"
 
-//内部全局
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+
+//数据区Flash定义
+#define	DataFlashLen 0x3FF  //CMS8S6990单片机的数据区有1KByte，寻址范围是0-3FF
+#define SysCfgGroupLen (DataFlashLen/sizeof(SysROMImg))-1   //可用的配置组合长度
+
+//内部bit field的存储Mask
+#define IsLocked_MSK 0x01  //是否锁定 bit1
+#define IsEnableIdleLED_MSK 0x02 //是否开启有源夜光 bit2
+#define IsEnable2SMode_MSK 0x04  //是否开启2S模式 bit3
+
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Local type definitions('typedef')
+****************************************************************************/
+
+//存储类型声明
+typedef struct
+	{
+	int RampCurrent;
+  unsigned char BitfieldMem1;
+	}SysStorDef;
+	
+typedef union
+	{
+	SysStorDef Data;
+	char ByteBuf[sizeof(SysStorDef)];
+	}SysDataUnion;
+
+typedef struct
+	{
+	SysDataUnion SysConfig;
+	char CheckSum;
+	}SysROMImageDef;
+
+typedef union
+	{
+	SysROMImageDef Data;
+	char ByteBuf[sizeof(SysROMImageDef)];
+	}SysROMImg;
+
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
 static xdata unsigned int CurrentIdx;
 static xdata u8 CurrentCRC;
 
-//CRC-8计算 
-static u8 PEC8Check(char *DIN,char Len)
-{
- unsigned char crcbuf=0xFF;
- unsigned char i;
- do
+/****************************************************************************/
+/*	Function implementation - local('static')
+****************************************************************************/
+static u8 PEC8Check(char *DIN,char Len)	//CRC-8计算 
 	{
-  //载入数据
-  crcbuf^=*DIN++;
-  //计算
-  i=8;
+	unsigned char crcbuf=0xFF;
+	unsigned char i;
 	do
-   {
-	 if(crcbuf&0x80)crcbuf=(crcbuf<<1)^0x07;//最高位为1，左移之后和多项式XOR
-	 else crcbuf<<=1;//最高位为0，只移位不XOR
-	 }
-	while(--i);
+		{
+		//载入数据
+		crcbuf^=*DIN++;
+		//计算
+		i=8;
+			do
+			{
+			if(crcbuf&0x80)crcbuf=(crcbuf<<1)^0x07;//最高位为1，左移之后和多项式XOR
+			else crcbuf<<=1;//最高位为0，只移位不XOR
+			}
+		while(--i);
+		}
+	while(--Len);
+	//输出结果
+	return crcbuf;
 	}
- while(--Len);
- //输出结果
- return crcbuf;
-}
 
 //从EEPROM内寻找最后的一组系统配置
-static int SearchSysConfig(SysROMImg *ROMData)
+static int SearchSysConfig(SysROMImg *ROMData)	
 	{
 	unsigned char i;
 	int Len=0;
@@ -56,6 +119,7 @@ static int SearchSysConfig(SysROMImg *ROMData)
 	//读取结束，返回上一组有数据的index
 	return Len;
 	}
+
 //准备初始的系统设置
 static void PrepareFactoryDefaultCfg(void)
 	{
@@ -115,8 +179,11 @@ static void ShowEPROMCorrupted(void)
 	TriggerSoftwareReset();
 	}
 	
-//读取无极调光配置
-void ReadSysConfig(void)
+/****************************************************************************/
+/*	Function implementation - global ('extern')
+****************************************************************************/
+	
+void ReadSysConfig(void)	//读取系统的整体配置
 	{
 	xdata SysROMImg ROMData;
 	//读取数据

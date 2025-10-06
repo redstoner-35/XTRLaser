@@ -1,19 +1,55 @@
+/****************************************************************************/
+/** \file VersionCheck.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件是顶层应用层文件，负责实现系统中向用户播报固件编译时间戳
+以方便用户确认当前系统搭载的固件版本的功能
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "ModeControl.h"
 #include "VersionCheck.h"
 #include "SideKey.h"
+
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
+
+extern xdata unsigned char CommonSysFSMTIM;
+xdata VersionChkFSMDef VChkFSMState=VersionCheck_InAct;
+
+/****************************************************************************/
+/*	Local constant definitions('static const')
+****************************************************************************/
 
 /*********** 固件时间戳 ***********
 固件时间戳包含固件编译的年，月，日以
 及24小时制时间和分钟。
 **********************************/
-static code char TimeStamp[]={"25 09 30-20 16"};
+static code char TimeStamp[]={"25 10 06-16 56"};
 
-//变量
-extern xdata unsigned char CommonSysFSMTIM;
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
+
 static xdata unsigned char VersionIndex=0; //版本号字符串index
 static xdata unsigned char VersionShowFastStrobeTIM;  //快速闪烁提示计时器
-xdata VersionChkFSMDef VChkFSMState=VersionCheck_InAct;
-	
+
+/****************************************************************************/
+/*	Local function prototypes('static')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Function implementation - global ('extern') and local('static')
+****************************************************************************/	
 //启动显示流程
 void VersionCheck_Trigger(void)
 	{

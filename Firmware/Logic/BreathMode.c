@@ -1,13 +1,63 @@
+/****************************************************************************/
+/** \file BreathMode.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件是顶层应用层文件，负责实现系统三击特殊功能组合里面的巡航
+呼吸闪功能（灯珠从最暗缓缓升到最亮然后缓降到最暗后熄灭，等一会后再循环反复）
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "BreathMode.h"
 #include "ModeControl.h"
 
-//内部变量
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+
+//呼吸模式的参数配置
+#define CurrentRampUpInc 1 //呼吸模式下电流上升的速度
+#define CurrentRampDownDec 1 //呼吸模式下电流下降的速度
+#define CurrentHighSustainTime 4 //呼吸模式下电流在最高点的保持时间（0.125S per LSB）
+#define CurrentLowSustainTime 5  //呼吸模式下电流在关闭点的保持时间（单位 秒）
+
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Local type definitions('typedef')
+****************************************************************************/
+
+typedef enum
+	{
+	//内部状态
+	BreathMode_RampUp,
+	BreathMode_MaintainHigh,
+	BreathMode_RampDown,
+	BreathMode_MaintainLow 
+	}BreathModeFSMDef;
+	
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
+
 static xdata int BreathCurrentBuf;
 static xdata unsigned char BreathFSMTIM;
 static xdata BreathModeFSMDef BreathFSM;
 static xdata char BreathModeDivCNT;
 
+/****************************************************************************/
+/*	Local function prototypes('static')
+****************************************************************************/
 
+/****************************************************************************/
+/*	Function implementation - global ('extern') and local('static')
+****************************************************************************/
+	
 //复位呼吸模式状态机
 void BreathFSM_Reset(void)
 	{

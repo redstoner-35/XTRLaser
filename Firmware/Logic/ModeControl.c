@@ -1,3 +1,17 @@
+/****************************************************************************/
+/** \file ModeControl.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件是顶层应用层文件，负责实现解析按键事件并按照事件执行模式
+状态机驱动实现激光手电内所有的挡位切换和操作逻辑。同时该文件实现了根据挡位的特性进
+行高级输出电流合成并将电流参数传递给输出通道模块的电流合成操作。
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "LEDMgmt.h"
 #include "SideKey.h"
 #include "BattDisplay.h"
@@ -12,6 +26,39 @@
 #include "SOS.h"
 #include "BreathMode.h"
 #include "Beacon.h"
+
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+
+#define LockLowPowerIndTimeOut 20   //锁定模式下临时点亮的超时时间(秒)
+#define BurnModeTimeOut 60 				  //烧灼模式无操作自动退出的时间(秒)
+#define RampAdjustDividingFactor 6  //无极调光模式下控制调光速度的分频比例，越大则调光速度越慢
+#define HoldSwitchDelay 6 				  // 长按换挡延迟(1单位=0.125秒)
+
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
+
+//全局变量(挡位)
+ModeStrDef *CurrentMode; //挡位结构体指针
+xdata ModeIdxDef LastMode; //挡位记忆存储
+xdata ModeIdxDef LastModeBeforeTurbo; //上一个进入极亮的挡位
+xdata SysConfigDef SysCfg; //系统配置	
+
+//全局变量(状态位)
+bit IsSystemLocked;		 //系统是否已锁定
+bit IsEnableIdleLED;	 //是否开启待机提示
+bit IsBurnMode;        //是否进入到了烧灼模式	
+bit IsEnable2SMode;    //是否开启双锂模式	
+	
+//全局软件计时变量
+xdata unsigned char HoldChangeGearTIM; //挡位模式下长按换挡
+xdata unsigned char DisplayLockedTIM; //锁定和战术模式进入退出显示
+
+/****************************************************************************/
+/*	Local/global constant definitions('const')
+****************************************************************************/
 
 //挡位结构体
 code ModeStrDef ModeSettings[ModeTotalDepth]=
@@ -255,24 +302,10 @@ code ModeStrDef ModeSettings[ModeTotalDepth]=
 		Mode_OFF	 //模式挡位切换设置，长按和单击+长按切换到的目标挡位(输入OFF表示不进行切换)
 		},		
 	};
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
 
-//全局变量(挡位)
-ModeStrDef *CurrentMode; //挡位结构体指针
-xdata ModeIdxDef LastMode; //挡位记忆存储
-xdata ModeIdxDef LastModeBeforeTurbo; //上一个进入极亮的挡位
-xdata SysConfigDef SysCfg; //系统配置	
-
-//全局变量(状态位)
-bit IsSystemLocked;		//系统是否已锁定
-bit IsEnableIdleLED;	//是否开启待机提示
-bit IsBurnMode;        //是否进入到了烧灼模式	
-bit IsEnable2SMode;    //是否开启双锂模式	
-	
-//全局软件计时变量
-xdata unsigned char HoldChangeGearTIM; //挡位模式下长按换挡
-xdata unsigned char DisplayLockedTIM; //锁定和战术模式进入退出显示
-
-//内部变量和标志位
 static xdata unsigned char LockINDTimer;  //锁定条件下临时使能激光的计时器
 static xdata unsigned int BurnModeTimer;  //点按超时计时器
 static xdata unsigned char RampDIVCNT; //无极调光降低调光速度的分频计时器		
@@ -280,8 +313,202 @@ static bit IsRampKeyPressed;  //标志位，用户是否按下按键对无极调光进行调节
 static bit IsNotifyMaxRampLimitReached; //标记无极调光达到最大电流	
 static bit RampEnteredStillHold;    //无极调光进入后按键仍然按住
 static bit IsSingleCellEnterTurbo;  //是否1S电池进入极亮
-static bit IsDisplayLocked;         //是否开启锁定指示
+static bit IsDisplayLocked;         //是否开启锁定指示	
 	
+/****************************************************************************/
+/*	Function implementation - local('static')
+****************************************************************************/
+
+//查询挡位的目标电池电压
+static int QueryModeRequiredBattVolt(ModeIdxDef TargetMode)	
+	{
+		unsigned char i;
+	for(i=0;i<ModeTotalDepth;i++)if(ModeSettings[i].ModeIdx==TargetMode)
+		{
+		//找到目标挡位了，返回保护电压值
+		return ModeSettings[i].LowVoltThres;
+		}
+	//整个挡位存储区域找遍了都没有，返回0
+	return 0;
+	}	
+	
+//无极调光处理
+static void RampAdjHandler(void)
+	{	
+  int Limit;
+	bit IsPress;
+  //计算出无极调光上限
+	IsPress=getSideKey1HEvent()|getSideKeyHoldEvent();
+	Limit=IsEnable2SMode?QueryCurrentGearILED():SingleCellModeICCMAX;                    				 //双锂模式限制电流最大不能超过1.8A
+	Limit=SysCfg.RampCurrentLimit<Limit?SysCfg.RampCurrentLimit:Limit;
+	if(Limit<QueryCurrentGearILED()&&IsPress&&SysCfg.RampCurrent>Limit)SysCfg.RampCurrent=Limit; //在电流被限制的情况下用户按下按键尝试调整电流，立即限幅
+	//进行亮度调整
+	if(getSideKeyHoldEvent()&&!IsRampKeyPressed) //长按增加电流
+			{	
+			if(RampDIVCNT)RampDIVCNT--;
+			else 
+				{
+				//时间到，开始增加电流
+				if(SysCfg.RampCurrent<Limit)SysCfg.RampCurrent++;
+				else
+					{
+					IsNotifyMaxRampLimitReached=1; //标记已达到上限
+					SysCfg.RampLimitReachDisplayTIM=4; //熄灭0.5秒指示已经到上限
+					SysCfg.RampCurrent=Limit; //限制电流最大值	
+					IsRampKeyPressed=1;
+					}
+				//计时时间到，复位变量
+				RampDIVCNT=RampAdjustDividingFactor;
+				}
+			}	
+	else if(getSideKey1HEvent()&&!IsRampKeyPressed) //单击+长按减少电流
+		 {
+			if(RampDIVCNT)RampDIVCNT--;
+			else
+				{
+				if(SysCfg.RampCurrent>CurrentMode->MinCurrent)SysCfg.RampCurrent--; //减少电流	
+				else
+					{
+					IsNotifyMaxRampLimitReached=0;
+					SysCfg.RampLimitReachDisplayTIM=4; //熄灭0.5秒指示已经到下限
+					SysCfg.RampCurrent=CurrentMode->MinCurrent; //限制电流最小值
+					IsRampKeyPressed=1;
+					}
+				//计时时间到，复位变量
+				RampDIVCNT=RampAdjustDividingFactor;
+				}
+		 }
+  else if(!IsPress&&IsRampKeyPressed)
+		{
+	  IsRampKeyPressed=0; //用户放开按键，允许调节		
+		RampDIVCNT=RampAdjustDividingFactor; //复位分频计时器
+		}
+	//进行数据保存的判断
+	if(IsPress)SysCfg.CfgSavedTIM=32; //按键按下说明正在调整，复位计时器
+	else if(SysCfg.CfgSavedTIM==1)
+		{
+		SysCfg.CfgSavedTIM--;
+		SaveSysConfig(0);  //一段时间内没操作说明已经调节完毕，保存数据
+		}
+	}
+//进行关机和开机状态执行N击+长按事件处理的函数
+static void ProcessNClickAndHoldHandler(void)
+	{
+  //正常执行处理
+	switch(getSideKeyNClickAndHoldEvent())
+		{
+		case 1:	//单击+长按进入对焦专用挡位
+			if(CurrentMode->ModeIdx!=Mode_OFF)break;
+			SwitchToGear(Mode_Focus);
+			break; 
+		case 2:TriggerVshowDisplay();break; //双击+长按查询电量
+		case 3:TriggerTShowDisplay();break;//三击+长按查询温度
+		case 4:
+			  //关机状态下四击+长按开启无极调光并强制锁到最低电流
+			  if(CurrentMode->ModeIdx!=Mode_OFF)break;
+				if(CellVoltage>2850)
+					{
+					SwitchToGear(Mode_Ramp);
+					RampRestoreLVProtToMax();
+					RampEnteredStillHold=1;
+					}
+				else LEDMode=LED_RedBlinkFifth;	//手电处于关机状态下且电池电量不足，闪烁五次提示进不去	
+		    break;
+		case 5:
+			  //五击+长按进入无任何电量保护机制（除了低于Boost芯片的UVLO后系统会关闭之外）的应急SOS模式
+		    if(CurrentMode->ModeIdx!=Mode_OFF)break;
+
+				if(Data.RawBattVolt<BoostChipUVLO)LEDMode=LED_RedBlinkFifth;
+		    else SwitchToGear(Mode_SOS_NoProt);
+		    break;
+		//其余情况什么都不做
+		default:break;			
+		}
+	}	
+	
+//开启到普通模式
+static void PowerToNormalMode(ModeIdxDef Mode)
+	{
+  ModeIdxDef ModeBuf=Mode;
+	do
+		{
+		if(CellVoltage>QueryModeRequiredBattVolt(ModeBuf)+50)
+			{
+			//当前电池电压支持运行到该挡位，切换到该挡位并退出
+			SwitchToGear(ModeBuf);
+			return;
+			}
+		}
+  while(ModeBuf>2);		//从高亮开始，反复往下匹配寻找可以开启的挡位
+
+	//找遍了所有挡位都没找到合适的，提示电量异常，如果系统处于开启状态则立即关闭
+	if(CurrentMode->ModeIdx==Mode_OFF)LEDMode=LED_RedBlinkFifth;	
+	else ReturnToOFFState();	 
+	}
+	
+//尝试进入极亮的处理
+static void TryEnterTurboProcess(char Count)	
+	{
+	//非双击模式或者系统锁定，退出
+  if(Count!=2||IsSystemLocked)return;
+	//未开启2S模式，双击切换到1.8A挡位并使能标记位暂时禁用挡位记忆实现伪装的极亮
+  if(!IsEnable2SMode)
+			 {
+		   PowerToNormalMode(Mode_MHigh);
+			 if(CurrentMode->ModeIdx==Mode_MHigh)IsSingleCellEnterTurbo=1;
+			 }
+	//电池电量充足且没有触发关闭极亮的保护，正常开启
+	else if(CellVoltage>QueryModeRequiredBattVolt(Mode_Turbo)+50&&!IsDisableTurbo)
+			{
+			if(CurrentMode->ModeIdx>1)LastModeBeforeTurbo=CurrentMode->ModeIdx; //存下进入极亮之前的挡位
+			if(LastMode>2&&LastMode<7)LastMode=CurrentMode->ModeIdx; //离开循环档的时候，更新循环挡位的主记忆
+		  SwitchToGear(Mode_Turbo); 
+			}
+	//电池电池电量不足或者极亮被锁定尝试开到高亮去
+	else PowerToNormalMode(Mode_High);	
+	}
+	
+	
+//进行模式状态机的表驱动模块处理	
+static void ModeSwitchFSMTableDriver(char ClickCount)
+	{
+	if(CurrentMode->IsEnterTurboStrobe)TryEnterTurboProcess(ClickCount);//读取当前的模式结构体，执行进入极亮或者爆闪的检测	
+  if(IsLargerThanOneU8(CurrentMode->ModeIdx)) //大于1的比较									
+		{
+		//系统在开机状态，且标志位无效之后则执行电量显示启动检测
+		ProcessNClickAndHoldHandler();		
+		//侧按单击关机
+		if(ClickCount==1)ReturnToOFFState();
+		//系统在关闭状态下电池电压低于boost芯片的UVLO值后系统就无法工作了，关机
+		else if(!GetIfOutputEnabled()&&Data.RawBattVolt<BoostChipUVLO)ReturnToOFFState();		
+		}
+ 	if(HoldChangeGearTIM&0x80)	 
+		{
+		//当挡位数据库内的状态表使能长按换挡功能且条件满足时，执行顺向换挡
+		HoldChangeGearTIM&=0x7F;
+    if(!IsEnable2SMode&&CurrentMode->ModeTargetWhenH==Mode_High)SwitchToGear(Mode_Low);       //非双锂电模式如果检测到顺向换挡试图换到高挡位，则换到低档构成循环			
+		else if(CurrentMode->ModeTargetWhenH!=Mode_OFF)
+			{
+		  //正常执行顺向换挡，如果电池电压高于目标要换的挡位则跳过去，否则立即跳到最低构成循环
+		  if(CellVoltage>QueryModeRequiredBattVolt(CurrentMode->ModeTargetWhenH)+50)SwitchToGear(CurrentMode->ModeTargetWhenH);	
+			else SwitchToGear(Mode_Low);
+			}
+		}
+	
+	if(HoldChangeGearTIM&0x20)  
+		{
+		//当挡位数据库内的状态表使能单击+长按换挡功能且条件满足时，执行逆向换挡
+		HoldChangeGearTIM&=0xDF; 
+		if(CurrentMode->ModeTargetWhen1H!=Mode_OFF)SwitchToGear(CurrentMode->ModeTargetWhen1H); 
+		}
+	
+	if(CurrentMode->LVConfig)BatteryLowAlertProcess(CurrentMode->LVConfig&0x02,CurrentMode->ModeWhenLVAutoFall); //执行低电量处理
+	}	
+
+/****************************************************************************/
+/*	Function implementation - global ('extern')
+****************************************************************************/
+
 //输入指定的Index，从index里面找到目标模式结构体并返回指针
 ModeStrDef *FindTargetMode(ModeIdxDef Mode,bool *IsResultOK)
 	{
@@ -295,7 +522,7 @@ ModeStrDef *FindTargetMode(ModeIdxDef Mode,bool *IsResultOK)
 	//返回对应的index
 	return &ModeSettings[i];
 	}
-	
+
 //初始化模式状态机
 void ModeFSMInit(void)
 	{
@@ -420,159 +647,7 @@ void HoldSwitchGearCmdHandler(void)
 		}
 	}	
 
-//无极调光处理
-static void RampAdjHandler(void)
-	{	
-  int Limit;
-	bit IsPress;
-  //计算出无极调光上限
-	IsPress=getSideKey1HEvent()|getSideKeyHoldEvent();
-	Limit=IsEnable2SMode?QueryCurrentGearILED():SingleCellModeICCMAX;                    //双锂模式限制电流最大不能超过1.8A
-	Limit=SysCfg.RampCurrentLimit<Limit?SysCfg.RampCurrentLimit:Limit;
-	if(Limit<QueryCurrentGearILED()&&IsPress&&SysCfg.RampCurrent>Limit)SysCfg.RampCurrent=Limit; //在电流被限制的情况下用户按下按键尝试调整电流，立即限幅
-	//进行亮度调整
-	if(getSideKeyHoldEvent()&&!IsRampKeyPressed) //长按增加电流
-			{	
-			if(RampDIVCNT)RampDIVCNT--;
-			else 
-				{
-				//时间到，开始增加电流
-				if(SysCfg.RampCurrent<Limit)SysCfg.RampCurrent++;
-				else
-					{
-					IsNotifyMaxRampLimitReached=1; //标记已达到上限
-					SysCfg.RampLimitReachDisplayTIM=4; //熄灭0.5秒指示已经到上限
-					SysCfg.RampCurrent=Limit; //限制电流最大值	
-					IsRampKeyPressed=1;
-					}
-				//计时时间到，复位变量
-				RampDIVCNT=RampAdjustDividingFactor;
-				}
-			}	
-	else if(getSideKey1HEvent()&&!IsRampKeyPressed) //单击+长按减少电流
-		 {
-			if(RampDIVCNT)RampDIVCNT--;
-			else
-				{
-				if(SysCfg.RampCurrent>CurrentMode->MinCurrent)SysCfg.RampCurrent--; //减少电流	
-				else
-					{
-					IsNotifyMaxRampLimitReached=0;
-					SysCfg.RampLimitReachDisplayTIM=4; //熄灭0.5秒指示已经到下限
-					SysCfg.RampCurrent=CurrentMode->MinCurrent; //限制电流最小值
-					IsRampKeyPressed=1;
-					}
-				//计时时间到，复位变量
-				RampDIVCNT=RampAdjustDividingFactor;
-				}
-		 }
-  else if(!IsPress&&IsRampKeyPressed)
-		{
-	  IsRampKeyPressed=0; //用户放开按键，允许调节		
-		RampDIVCNT=RampAdjustDividingFactor; //复位分频计时器
-		}
-	//进行数据保存的判断
-	if(IsPress)SysCfg.CfgSavedTIM=32; //按键按下说明正在调整，复位计时器
-	else if(SysCfg.CfgSavedTIM==1)
-		{
-		SysCfg.CfgSavedTIM--;
-		SaveSysConfig(0);  //一段时间内没操作说明已经调节完毕，保存数据
-		}
-	}
-//进行关机和开机状态执行N击+长按事件处理的函数
-static void ProcessNClickAndHoldHandler(void)
-	{
-  //正常执行处理
-	switch(getSideKeyNClickAndHoldEvent())
-		{
-		case 1:	//单击+长按进入对焦专用挡位
-			if(CurrentMode->ModeIdx!=Mode_OFF)break;
-			SwitchToGear(Mode_Focus);
-			break; 
-		case 2:TriggerVshowDisplay();break; //双击+长按查询电量
-		case 3:TriggerTShowDisplay();break;//三击+长按查询温度
-		case 4:
-			  //关机状态下四击+长按开启无极调光并强制锁到最低电流
-			  if(CurrentMode->ModeIdx!=Mode_OFF)break;
-				if(CellVoltage>2850)
-					{
-					SwitchToGear(Mode_Ramp);
-					RampRestoreLVProtToMax();
-					RampEnteredStillHold=1;
-					}
-				else LEDMode=LED_RedBlinkFifth;	//手电处于关机状态下且电池电量不足，闪烁五次提示进不去	
-		    break;
-		case 5:
-			  //五击+长按进入无任何电量保护机制的应急SOS模式
-		    if(CurrentMode->ModeIdx!=Mode_OFF)break;
-		    SwitchToGear(Mode_SOS_NoProt);
-		    break;
-		//其余情况什么都不做
-		default:break;			
-		}
-	}	
 
-//开启到普通模式
-static void PowerToNormalMode(ModeIdxDef Mode)
-	{
-	if(CellVoltage>3050)SwitchToGear(Mode); //正常开启		
-	else if(CellVoltage>2750)SwitchToGear(Mode_Low); //电量不足进入低亮
-	else if(CurrentMode->ModeIdx==Mode_OFF)LEDMode=LED_RedBlinkFifth;	//手电处于关机状态下且电池电量不足，闪烁五次提示进不去	
-	else ReturnToOFFState();	 //电池电量严重不足，且手电开着，直接关机
-	}
-	
-//尝试进入极亮和爆闪的处理
-void TryEnterTurboProcess(char Count)	
-	{
-	//非双击模式或者系统锁定，退出
-  if(Count!=2||IsSystemLocked)return;
-	//未开启2S模式，双击切换到1.8A挡位并使能标记位暂时禁用挡位记忆实现伪装的极亮
-  if(!IsEnable2SMode)
-			 {
-		   PowerToNormalMode(Mode_MHigh);
-			 if(CurrentMode->ModeIdx==Mode_MHigh)IsSingleCellEnterTurbo=1;
-			 }
-	//电池电量充足且没有触发关闭极亮的保护，正常开启
-	else if(CellVoltage>3450&&!IsDisableTurbo)
-			{
-			if(CurrentMode->ModeIdx>1)LastModeBeforeTurbo=CurrentMode->ModeIdx; //存下进入极亮之前的挡位
-			if(LastMode>2&&LastMode<7)LastMode=CurrentMode->ModeIdx; //离开循环档的时候，更新循环挡位的主记忆
-		  SwitchToGear(Mode_Turbo); 
-			}
-	//电池电池电量不足或者极亮被锁定尝试开到高亮去
-	else PowerToNormalMode(Mode_High);	
-	}
-	
-	
-//进行模式状态机的表驱动模块处理	
-static void ModeSwitchFSMTableDriver(char ClickCount)
-	{
-	if(CurrentMode->IsEnterTurboStrobe)TryEnterTurboProcess(ClickCount);//读取当前的模式结构体，执行进入极亮或者爆闪的检测	
-  if(IsLargerThanOneU8(CurrentMode->ModeIdx)) //大于1的比较									
-		{
-		//系统在开机状态，且标志位无效之后则执行电量显示启动检测
-		ProcessNClickAndHoldHandler();
-		//侧按单击关机	
-		if(ClickCount==1)ReturnToOFFState();
-		}
- 	if(HoldChangeGearTIM&0x80)	 
-		{
-		//当挡位数据库内的状态表使能长按换挡功能且条件满足时，执行顺向换挡
-		HoldChangeGearTIM&=0x7F;
-    if(!IsEnable2SMode&&CurrentMode->ModeTargetWhenH==Mode_High)SwitchToGear(Mode_Low);       //非双锂电模式如果检测到顺向换挡试图换到高挡位，则换到低档构成循环			
-		else if(CurrentMode->ModeTargetWhenH!=Mode_OFF)SwitchToGear(CurrentMode->ModeTargetWhenH); 		
-		}
-	
-	if(HoldChangeGearTIM&0x20)  
-		{
-		//当挡位数据库内的状态表使能单击+长按换挡功能且条件满足时，执行逆向换挡
-		HoldChangeGearTIM&=0xDF; 
-		if(CurrentMode->ModeTargetWhen1H!=Mode_OFF)SwitchToGear(CurrentMode->ModeTargetWhen1H); 
-		}
-	
-	if(CurrentMode->LVConfig)BatteryLowAlertProcess(CurrentMode->LVConfig&0x02,CurrentMode->ModeWhenLVAutoFall); //执行低电量处理
-	}	
-	
 //挡位状态机
 void ModeSwitchFSM(void)
 	{
@@ -738,10 +813,6 @@ void ModeSwitchFSM(void)
 					LastModeBeforeTurbo=Mode_Low;   //每次使用了极亮进入记忆则复位记忆
 					}
 		    break;		
-		case Mode_SOS_NoProt:
-			 //系统在关闭状态下电池电压低于2.5V后boost芯片就无法工作了，关机
-       if(!GetIfOutputEnabled()&&Data.RawBattVolt<2.50)ReturnToOFFState();		
-			  break;
     //烧灼模式
     case Mode_Burn:
 			  //系统过热达到退出极亮的标准或长时间无操作，系统关闭

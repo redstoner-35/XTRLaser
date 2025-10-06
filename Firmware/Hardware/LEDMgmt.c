@@ -1,3 +1,16 @@
+/****************************************************************************/
+/** \file LEDMgmt.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件负责实现侧按电子开关的红绿双色电量指示灯的初始化、驱动和
+多种闪烁模式的实现
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "delay.h"
 #include "LEDMgmt.h"
 #include "GPIO.h"
@@ -5,19 +18,38 @@
 #include "cms8s6990.h"
 #include "LVDCtrl.h"
 
-//全局变量
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+#define ThermalStepDownInfoGap 12 //温度降档提示短暂熄灭的间隔(0.125秒每单位)
+
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
 volatile LEDStateDef LEDMode; 
 
-//内部计时变量
+/****************************************************************************/
+/*	Local type definitions('typedef')
+****************************************************************************/
+
+/****************************************************************************/
+/*	Local variable and SFR definitions('static and sfr')
+****************************************************************************/
 static xdata char timer;
 static xdata char BoostModeInfoTIM;
 
-//内部sfr
 sbit RLED=RedLEDIOP^RedLEDIOx;
-sbit GLED=GreenLEDIOP^GreenLEDIOx;
+sbit GLED=GreenLEDIOP^GreenLEDIOx; 
+/****************************************************************************/
+/*	Local and external function prototypes
+****************************************************************************/
+bit QueryIsThermalStepDown(void); //温控降档触发检测
 
-//LED关闭函数
-void LED_DeInit(void)
+/****************************************************************************/
+/*	Function implementation - global ('extern') and local('static')
+****************************************************************************/
+
+void LED_DeInit(void)	//LED管理器关闭函数
 	{
 	//令所有LED熄灭
 	RLED=0;
@@ -50,16 +82,14 @@ void LED_Init(void)
 	LEDMode=LED_OFF;
 	}
 
-//LED控制函数
-bit QueryIsThermalStepDown(void); //声明降档检测函数	
-	
+//LED控制函数	
 void LEDControlHandler(void)
 	{
 	char buf;
 	//进行温控降档触发工作指示
 	if(QueryIsThermalStepDown())
 		{
-		if(BoostModeInfoTIM<12)BoostModeInfoTIM++;
+		if(BoostModeInfoTIM<ThermalStepDownInfoGap)BoostModeInfoTIM++;
 		else
 			{
 			BoostModeInfoTIM=0;

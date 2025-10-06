@@ -1,3 +1,17 @@
+/****************************************************************************/
+/** \file BattVoltDisplay.c
+/** \Author redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件为中层设备驱动文件，负责实现系统中的电池电压和电池电量
+状态的转换，电池电压以及复用电池电压报告状态机的温度查询实现。同时该文件负责管理
+根据系统状态和电量控制侧按指示灯
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include "ADCCfg.h"
 #include "LEDMgmt.h"
 #include "delay.h"
@@ -9,39 +23,70 @@
 #include "SelfTest.h"
 #include "SysConfig.h"
 
-//电池状态flag
-bit IsBatteryAlert; //电池电压低于警告值	
-bit IsBatteryFault; //电池电压低于保护值		
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
 
-//内部变量
-static xdata unsigned char BattShowTimer; //电池电量显示计时
-static xdata AverageCalcDef BattVolt;	
-static xdata unsigned char LowVoltStrobeTIM;
-static xdata unsigned char EmerSosShowBattStateTimer=0; //紧急求救模式下显示电池状态的计时器
-static xdata int VbattSample; //取样的电池电压
-static xdata unsigned char Show2SModeTIM;   //显示2S模式计时处理
-static bit IsReportingTemperature=0; //报告温度
-static bit IsWaitingKeyEventToDeassert=0; //内部标志位，等待电池显示结束后再使能状态机响应
+#define VBattAvgCount 40 //等效单节电池电压数据的平均次数(用于内部逻辑的低压保护,电量显示和电量不足跳档)
+#define LowVoltStrobeGap 15 //触发低电压提示之后每隔多久闪一次
+#define EmergencySOSShowBattGap 5 //紧急SOS模式下显示电池电量的的间隔时间
 
-//外部全局变量
+/****************************************************************************/
+/*	Global variable definitions(declared in header file with 'extern')
+****************************************************************************/
+
+bit IsBatteryAlert; //Flag，电池电压低于警告值	
+bit IsBatteryFault; //Flag，电池电压低于保护值		
 BattStatusDef BattState; //电池电量标记位
 xdata int CellVoltage; //等效单节电池电压
 xdata unsigned char CommonSysFSMTIM;  //电压显示计时器
 xdata BattVshowFSMDef VshowFSMState; //电池电压显示所需的计时器和状态机转移
 
+/****************************************************************************/
+/*	Local type definitions('typedef')
+****************************************************************************/
+typedef struct
+	{
+	//电池电压平均计算结构体
+	int Min;
+  int Max;
+	long AvgBuf;
+	unsigned char Count;
+	}AverageCalcDef;	
+/****************************************************************************/
+/*	Local variable  definitions('static')
+****************************************************************************/
 
-//内部使用的先导显示表
+static xdata unsigned char BattShowTimer=0; //电池电量显示计时
+static xdata AverageCalcDef BattVolt;	
+static xdata unsigned char LowVoltStrobeTIM=0;
+static xdata unsigned char EmerSosShowBattStateTimer=0; //紧急求救模式下显示电池状态的计时器
+static xdata int VbattSample; //取样的电池电压
+static xdata unsigned char Show2SModeTIM=0;   //显示2S模式计时处理
+static bit IsReportingTemperature=0; //报告温度
+static bit IsWaitingKeyEventToDeassert=0; //内部标志位，等待电池显示结束后再使能状态机响应
+
+/****************************************************************************/
+/*	Local constant definitions('static const')
+****************************************************************************/	
 static code LEDStateDef VShowIndexCode[]=
 	{
+	//内部使用的先导显示表
 	LED_Red,
 	LED_Amber,
 	LED_Green,  //正常过渡是红黄绿
 	LED_Amber,
 	LED_Red  //高精度模式是反过来，绿红黄
 	};
-
-//准备电压显示状态机的模块
-static void VShowFSMPrepare(void)	
+/****************************************************************************/
+/*	External function prototypes
+****************************************************************************/
+void LoadSleepTimer(void);
+	
+/****************************************************************************/
+/*	Function implementation - local('static')
+****************************************************************************/
+static void VShowFSMPrepare(void)	//准备电压显示状态机的模块
 	{
 	VshowFSMState=BattVdis_PrepareDis;	
 	if(CurrentMode->ModeIdx!=Mode_OFF)
@@ -50,74 +95,6 @@ static void VShowFSMPrepare(void)
 		LEDMode=LED_OFF;
 		}	
 	}
-
-//启动系统温度显示
-void TriggerTShowDisplay(void)
-	{
-	if(!Data.IsNTCOK||VshowFSMState!=BattVdis_Waiting)return; //非等待显示状态禁止操作
-	VShowFSMPrepare();
-	//进行温度取样
-	IsReportingTemperature=1;
-	if(IsNegative8(Data.Systemp))VbattSample=(int)Data.Systemp*-10;
-	else VbattSample=(int)Data.Systemp*10;
-	}
-
-//启动电池电压显示
-void TriggerVshowDisplay(void)	
-	{
-	if(VshowFSMState!=BattVdis_Waiting)return; //非等待显示状态禁止操作
-	VShowFSMPrepare();
-	//进行电压取样(缩放为LSB=0.01V)
-	VbattSample=(int)(Data.RawBattVolt*100); 		
-	}		
-
-//生成低电量提示报警
-bit LowPowerStrobe(void)
-	{
-	bit IsStartLowStrobe;
-	//判断是否满足启动低电量报警快闪	
-	if(BattState!=Battery_VeryLow)IsStartLowStrobe=0; //电池电量正常，禁止闪烁
-	else switch(CurrentMode->ModeIdx)
-		{
-		case Mode_OFF:	
-		case Mode_Fault:IsStartLowStrobe=0;break; //关机和故障状态下禁止显示 
-		case Mode_Breath:
-		case Mode_SOS:
-		case Mode_Beacon:
-		case Mode_SOS_NoProt:IsStartLowStrobe=0;break; //特殊挡位下禁止低电量提示闪
-		//其余默认挡位
-		default:IsStartLowStrobe=1; //其他挡位，开启显示
-		}
-
-	//不满足提示触发条件，不启动计时
-	if(!IsStartLowStrobe)LowVoltStrobeTIM=0;
-	//电量异常开始计时
-	else if(!LowVoltStrobeTIM)LowVoltStrobeTIM=1; //启动计时器
-	else if(LowVoltStrobeTIM>((LowVoltStrobeGap*8)-4))return 1; //触发闪烁标记电流为0
-	//其余情况返回0
-	return 0;
-	}
-	
-//处理显示进入2S模式，非阻塞快闪2次的流程
-void ShowEntered2SModeProc(void)
-	{
-	if(Show2SModeTIM&0x01)MakeFastStrobe(LED_Green);
-	//电池显示结束之后才允许倒计时
-	if(!BattShowTimer&&Show2SModeTIM)Show2SModeTIM--;
-	}	
-	
-//触发进入2S模式的快闪两次提示	
-void LoadSleepTimer(void);         //声明加载函数
-
-void Trigger2SModeEnterInfo(void)
-	{
-	//不允许重复触发
-	if(Show2SModeTIM)return;
-	//加载定时器确保显示结束才触发
-  LoadSleepTimer(); 
-	Show2SModeTIM=4;	//令计时器=4，倒计时开始
-	}	
-	
 //控制LED侧按产生闪烁指示电池电压的处理
 static void VshowGenerateSideStrobe(LEDStateDef Color,BattVshowFSMDef NextStep)
 	{
@@ -180,9 +157,8 @@ static void ShowBatteryState(void)
 	if(IsShowBatteryState)SetPowerLEDBasedOnVbatt();
 	else LEDMode=LED_OFF;  //非显示状态需要保持LED熄灭
 	}
-
 //电池采样显示电压
-LEDStateDef VshowEnter_ShowIndex(void)
+static LEDStateDef VshowEnter_ShowIndex(void)
 	{
 	char Index;
 	if(CommonSysFSMTIM>9)
@@ -331,7 +307,74 @@ static void ResetBattAvg(void)
 	BattVolt.Count=0;
   BattVolt.AvgBuf=0; //清除平均计数器和缓存
 	}
+
+/****************************************************************************/
+/*	Function implementation - global ('extern')
+****************************************************************************/
+void TriggerTShowDisplay(void)	//启动系统温度显示
+	{
+	if(!Data.IsNTCOK||VshowFSMState!=BattVdis_Waiting)return; //非等待显示状态禁止操作
+	VShowFSMPrepare();
+	//进行温度取样
+	IsReportingTemperature=1;
+	if(IsNegative8(Data.Systemp))VbattSample=(int)Data.Systemp*-10;
+	else VbattSample=(int)Data.Systemp*10;
+	}
+
+//启动电池电压显示
+void TriggerVshowDisplay(void)	
+	{
+	if(VshowFSMState!=BattVdis_Waiting)return; //非等待显示状态禁止操作
+	VShowFSMPrepare();
+	//进行电压取样(缩放为LSB=0.01V)
+	VbattSample=(int)(Data.RawBattVolt*100); 		
+	}		
+
+//生成低电量提示报警
+bit LowPowerStrobe(void)
+	{
+	bit IsStartLowStrobe;
+	//判断是否满足启动低电量报警快闪	
+	if(BattState!=Battery_VeryLow)IsStartLowStrobe=0; //电池电量正常，禁止闪烁
+	else switch(CurrentMode->ModeIdx)
+		{
+		case Mode_OFF:	
+		case Mode_Fault:IsStartLowStrobe=0;break; //关机和故障状态下禁止显示 
+		case Mode_Breath:
+		case Mode_SOS:
+		case Mode_Beacon:
+		case Mode_SOS_NoProt:IsStartLowStrobe=0;break; //特殊挡位下禁止低电量提示闪
+		//其余默认挡位
+		default:IsStartLowStrobe=1; //其他挡位，开启显示
+		}
+
+	//不满足提示触发条件，不启动计时
+	if(!IsStartLowStrobe)LowVoltStrobeTIM=0;
+	//电量异常开始计时
+	else if(!LowVoltStrobeTIM)LowVoltStrobeTIM=1; //启动计时器
+	else if(LowVoltStrobeTIM>((LowVoltStrobeGap*8)-4))return 1; //触发闪烁标记电流为0
+	//其余情况返回0
+	return 0;
+	}
 	
+//处理显示进入2S模式，非阻塞快闪2次的流程
+void ShowEntered2SModeProc(void)
+	{
+	if(Show2SModeTIM&0x01)MakeFastStrobe(LED_Green);
+	//电池显示结束之后才允许倒计时
+	if(!BattShowTimer&&Show2SModeTIM)Show2SModeTIM--;
+	}	
+	
+//触发进入2S模式的快闪两次提示	
+void Trigger2SModeEnterInfo(void)
+	{
+	//不允许重复触发
+	if(Show2SModeTIM)return;
+	//加载定时器确保显示结束才触发
+  LoadSleepTimer(); 
+	Show2SModeTIM=4;	//令计时器=4，倒计时开始
+	}	
+
 //在启动时显示电池电压
 void DisplayVBattAtStart(bit IsPOR)
 	{

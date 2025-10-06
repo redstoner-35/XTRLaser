@@ -1,19 +1,36 @@
+/****************************************************************************/
+/** \file NTC.c
+/** \Author [NTC resistor LUT generator BOT] @ redstoner_35
+/** \Project Xtern Ripper Laser Edition 
+/** \Description 这个文件负责实现根据NTC读回的阻值反向计算温度的功能（该文件由
+机器自动生成，未经允许不得随意修改！！）
+
+/** \AdditionINFO  
+		This is an automatically generated file by NTC resistor LUT 
+		generator. DO NOT EDIT UNLESS YOU FULLY UNDERSTAND WHAT THIS
+		FILE ACTUALLY DOES!
+		NTC PARAMETER:100.00KΩ @ 25℃ B4250
+		Table temperature range:-19℃ to 90℃
+		Total ROM space for table:378 Bytes
+		Target MCU Architecture:8051 Based MCU
+
+**	History: Initial Release
+**	
+*****************************************************************************/
+/****************************************************************************/
+/*	include files
+*****************************************************************************/
 #include <stdbool.h>
 
-/*-------------------------------------------------------------
- This is an automatically generated file by NTC resistor LUT 
- generator. DO NOT EDIT UNLESS YOU FULLY UNDERSTAND WHAT THIS
- FILE ACTUALLY DOES!
- NTC PARAMETER:100.00KΩ @ 25℃ B4250
- Table temperature range:-24℃ to 100℃
- Total ROM space for table:378 Bytes
- Target MCU Architecture:8051 Based MCU
--------------------------------------------------------------*/
+/****************************************************************************/
+/*	Local pre-processor symbols/macros('#define')
+****************************************************************************/
+#define TemperatureReportOffset 0	//温度反馈的偏移值（如果你发现温度不准，可以在这里对温度监测系统进行TRIM）
 
-//温度反馈的偏移值（如果你发现温度不准，可以在这里对温度监测系统进行TRIM）
-#define TemperatureReportOffset 0
-
-code unsigned long NTCTableTop[54]={
+/****************************************************************************/
+/*	Local constant definitions('static const')
+****************************************************************************/
+static code unsigned long NTCTableTop[54]={
 1179691,1104854, 1035294,   			//-19 到 -17 摄氏度
 970604, 910411, 854373, 802176,   //-16 到 -13 摄氏度
 753532, 708176, 665863, 626371,   //-12 到 -9 摄氏度
@@ -29,7 +46,7 @@ code unsigned long NTCTableTop[54]={
 86762, 82802, 79048, 75487,   //28 到 31 摄氏度
 72108, 68901, 65857  };
 
-code unsigned int NTCTableBottom[61]={
+static code unsigned int NTCTableBottom[61]={
 62965, 60218, 57607, 55125,   //35 到 38 摄氏度
 52765, 50520, 48384, 46350,   //39 到 42 摄氏度
 44415, 42572, 40816, 39143,   //43 到 46 摄氏度
@@ -45,6 +62,9 @@ code unsigned int NTCTableBottom[61]={
 9813, 9491, 9181, 8882,   //83 到 86 摄氏度
 8595, 8319, 8053, 7797   //87 到 90 摄氏度
 };
+/****************************************************************************/
+/*	Function implementation - global ('extern') and local('static')
+****************************************************************************/
 
 //NTC温度换算函数
 //传入参数：NTC阻值(Ω),温度是否有效的bool指针输出
@@ -77,4 +97,3 @@ for(i=0;i<61;i++)
 *IsNTCOK=false;
 return 0;
 }
-
