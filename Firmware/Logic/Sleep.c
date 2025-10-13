@@ -118,7 +118,7 @@ static char QueryIsSystemNotAllowToSleep(void)
 	//系统在显示电池电压和版本号，不允许睡眠
 	if(VshowFSMState!=BattVdis_Waiting||VChkFSMState!=VersionCheck_InAct)return 1;
 	//系统开机了
-	if(IsLargerThanOneU8(CurrentMode->ModeIdx))return 1;
+	if(Current>0||IsLargerThanOneU8(CurrentMode->ModeIdx))return 1;
 	//允许睡眠
 	return 0;
 	}	
@@ -198,8 +198,24 @@ void SleepMgmt(void)
 				{
 				//系统未上锁，执行上锁处理
 				IsSystemLocked=1;
-				LastMode=Mode_Low;      					//重置系统的挡位模式记忆至最低
+				LastMode=Mode_Low;								//重置系统的挡位模式记忆至最低
+				//制造三次快闪指示进入锁定模式
+				StartSystemTimeBase(); 						//启动系统定时器提供系统定时和延时函数
+				LED_Init(); 						          //初始化侧按LED
+				LEDMode=LED_RedBlinkThird;
+				while(LEDMode==LED_RedBlinkThird)if(SysHFBitFlag)
+					{
+					//制造三次红色快闪
+					sleepsel=~sleepsel;
+					if(sleepsel)LEDControlHandler();	
+					SysHFBitFlag=0;
+					}	
+				//闪烁提示完毕，保存配置并关闭LED
+				sleepsel=0;
 				SaveSysConfig(0);
+				DisableSysHBTIM();    
+				LED_DeInit(); 				//复位LED管理器并关闭系统定时器
+				ActiveBeacon_Start(); //启动有源夜光模块
 				}
 			else sleepsel=1; //系统已锁定，此时可以判断LVD是否需要关闭来决定是否关闭WUT
 			#else 

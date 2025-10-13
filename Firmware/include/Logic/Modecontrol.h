@@ -83,8 +83,8 @@ extern bit IsEnable2SMode;    //是否开启双锂模式
 #elif defined(USING_LD_NUBB37) 
 
 	//使用NUBB27/37 五管455nm LD	
-	#define SingleCellModeICCMAX 1500
-	#define DualCellTurboCurrent 3750
+	#define SingleCellModeICCMAX 1600
+	#define DualCellTurboCurrent 4000
 	
 #elif defined(USING_LD_NURM11T)
 	

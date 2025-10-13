@@ -26,10 +26,10 @@
 ****************************************************************************/
 
 //PWMDAC参数配置
-#define VdivUpResK 220 //运放分压部分的上端电阻(KΩ)
+#define VdivUpResK 110 //运放分压部分的上端电阻(KΩ)
 #define PWMDACResK 10 //PWMDAC的电阻阻值(KΩ)
-#define VdivDownResK 5.1 //运放分压部分的下端电阻(KΩ)
-#define CurrentOffset 99.2 //高电流通道下的电流偏差值(单位%)
+#define VdivDownResK 2.0 //运放分压部分的下端电阻(KΩ)
+#define CurrentOffset 99.5 //高电流通道下的电流偏差值(单位%)
 
 //输出主通道参数设置
 #define MainChannelShuntmOhm 10 //主通道的检流电阻阻值(mR)

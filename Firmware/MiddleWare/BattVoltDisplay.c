@@ -57,9 +57,9 @@ typedef struct
 /*	Local variable  definitions('static')
 ****************************************************************************/
 
-static xdata unsigned char BattShowTimer=0; //电池电量显示计时
+static xdata unsigned char BattShowTimer; //电池电量显示计时
 static xdata AverageCalcDef BattVolt;	
-static xdata unsigned char LowVoltStrobeTIM=0;
+static xdata unsigned char LowVoltStrobeTIM;
 static xdata unsigned char EmerSosShowBattStateTimer=0; //紧急求救模式下显示电池状态的计时器
 static xdata int VbattSample; //取样的电池电压
 static xdata unsigned char Show2SModeTIM=0;   //显示2S模式计时处理
@@ -141,8 +141,10 @@ static void SetPowerLEDBasedOnVbatt(void)
 static void ShowBatteryState(void)	
 	{
 	bit IsShowBatteryState;
+	//系统开机激活初始电量显示，正常执行
+	if(BattShowTimer)IsShowBatteryState=1;
 	//锁定模式下电池电量不显示	
-	if(IsSystemLocked)IsShowBatteryState=0;
+	else if(IsSystemLocked)IsShowBatteryState=0;
 	//非紧急求救挡位，正常显示
 	else if(CurrentMode->ModeIdx!=Mode_SOS_NoProt)IsShowBatteryState=1;
 	//紧急求救挡位下如果电池电量严重过低，显示
@@ -273,8 +275,13 @@ static void BatteryStateFSM(void)
 	{
 	int thres;
 	//计算阈值
-  if(CurrentMode->ModeIdx!=Mode_Turbo)thres=3650;
-  else thres=3550;
+	if(CurrentMode->ModeIdx==Mode_Turbo||CurrentMode->ModeIdx==Mode_Burn)
+		thres=3700-(CurrentBuf/10);  //极亮和烧灼模式，阈值等于3.7-电流值/10
+	else 
+		thres=3700-(CurrentBuf/15);  //非极亮阈值等于3.7-电流值/15
+
+	//转黄灯最低阈值限制，不能低于3.3V
+	if(thres<3300)thres=3300;    
 	//状态机处理	
 	switch(BattState) 
 		 {
@@ -294,7 +301,7 @@ static void BatteryStateFSM(void)
 		    break;
 		 //电池电量严重不足
 		 case Battery_VeryLow:
-			  if(CellVoltage>3300)BattState=Battery_Low; //电池电压回升到3.3，跳转到电量不足阶段
+			  if(CellVoltage>3200)BattState=Battery_Low; //电池电压回升到3.2，跳转到电量不足阶段
 		    break;
 		 }
 	}

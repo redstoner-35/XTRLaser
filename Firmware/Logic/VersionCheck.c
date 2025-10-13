@@ -34,7 +34,7 @@ xdata VersionChkFSMDef VChkFSMState=VersionCheck_InAct;
 固件时间戳包含固件编译的年，月，日以
 及24小时制时间和分钟。
 **********************************/
-static code char TimeStamp[]={"25 10 06-16 56"};
+static code char TimeStamp[]={"25 10 13-18 31"};
 
 /****************************************************************************/
 /*	Local variable  definitions('static')

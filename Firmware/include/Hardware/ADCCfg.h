@@ -37,7 +37,7 @@ typedef struct
 
 //ADC外部采集的参数配置
 #define VoutUpperResK 680
-#define VoutLowerResK 68 	 //输出检测分压的上下拉电阻
+#define VoutLowerResK 59 	 //输出检测分压的上下拉电阻
 #define VBattUpperResK 470
 #define VBattLowerResK 100 //电池检测分压的上下拉电阻
 #define NTCUpperResValueK 470 //NTC热敏电阻的上拉阻值
